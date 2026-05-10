@@ -7,6 +7,20 @@ Monorepo layout:
 
 ## Quick start
 
+### Run everything (recommended)
+1. Install dependencies in both apps (one-time):
+   - cd apps/api && npm install
+   - cd ../web && npm install
+2. From repo root, run:
+   - npm run dev
+
+This starts both:
+- API on `http://localhost:3001`
+- Web on `http://localhost:5173`
+
+Optional:
+- `npm run dev:watch` to run API in watch mode as well.
+
 ### Web
 1. cd apps/web
 2. npm install

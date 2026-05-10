@@ -11,3 +11,12 @@ port = 54322
 
 [studio]
 port = 54323
+
+[auth]
+enabled = true
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false

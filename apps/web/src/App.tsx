@@ -140,6 +140,9 @@ type PixelBlock = {
 };
 
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
+const CONFIGURED_API_URL = (
+  import.meta.env.VITE_API_URL ?? "http://localhost:3001"
+).replace(/\/$/, "");
 
 const NAV_ITEMS: Array<{ page: Page; label: string; helper: string }> = [
   { page: "home", label: "Home", helper: "Briefing" },
@@ -645,12 +648,31 @@ export default function App() {
       return;
     }
 
-    clearPasswordInputs();
-    if (data.session) {
-      setAuthMessage("Account created and signed in.");
-    } else {
-      setAuthMessage("Account created. Check your email to confirm before login.");
+    if (!data.session) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: authPassword
+      });
+
+      if (signInError) {
+        const normalized = signInError.message.toLowerCase();
+        if (
+          normalized.includes("email not confirmed") ||
+          normalized.includes("email_not_confirmed")
+        ) {
+          setAuthMessage(
+            "Account created, but Supabase email confirmation is enabled. Disable Confirm Email in Supabase Auth settings."
+          );
+        } else {
+          setAuthMessage(`Sign-up succeeded but auto-login failed: ${signInError.message}`);
+        }
+        setIsAuthSubmitting(false);
+        return;
+      }
     }
+
+    clearPasswordInputs();
+    setAuthMessage("Account created and signed in.");
     setIsAuthSubmitting(false);
   };
 
@@ -890,7 +912,7 @@ export default function App() {
       message.includes("NetworkError") ||
       message.includes("Load failed")
     ) {
-      return "API server is unreachable. Start apps/api with npm run dev and confirm VITE_API_URL points to http://localhost:3001.";
+      return `API server is unreachable. Start apps/api with "npm run dev" (or "npm run dev:watch"), then open ${CONFIGURED_API_URL}/health and confirm it returns status=ok.`;
     }
     if (message.includes("openai_not_configured")) {
       return "LLM provider is not configured. Add OPENROUTER_API_KEY or OPENAI_API_KEY to apps/api/.env, then restart the API.";
