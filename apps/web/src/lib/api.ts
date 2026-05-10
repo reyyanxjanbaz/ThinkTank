@@ -8,7 +8,7 @@ let resolvedApiBase: string | null = null;
 let resolvingApiBase: Promise<string> | null = null;
 
 const getApiUrls = () => {
-  const urls = ["", configuredApiUrl, "http://localhost:3001", "http://127.0.0.1:3001"];
+  const urls = [configuredApiUrl, "", "http://localhost:3001", "http://127.0.0.1:3001"];
 
   if (typeof window !== "undefined") {
     const { hostname, protocol } = window.location;
@@ -30,8 +30,22 @@ const probeApiBase = async (apiUrl: string) => {
     throw new Error(`Health check failed (${response.status}) for ${apiUrl || "same-origin"}`);
   }
 
+  let payload: { status?: string } | null = null;
+  try {
+    payload = (await response.json()) as { status?: string };
+  } catch {
+    throw new Error(`Health response was not JSON for ${apiUrl || "same-origin"}`);
+  }
+
+  if (payload.status !== "ok") {
+    throw new Error(`Health response missing status=ok for ${apiUrl || "same-origin"}`);
+  }
+
   return apiUrl;
 };
+
+const isRetriableStatus = (status: number) =>
+  status === 404 || status === 502 || status === 503 || status === 504;
 
 const resolveApiBase = async () => {
   if (resolvedApiBase !== null) {
@@ -70,7 +84,12 @@ const fetchFromApi = async (path: string, options?: RequestInit) => {
   };
 
   try {
-    return await makeRequest();
+    const response = await makeRequest();
+    if (isRetriableStatus(response.status)) {
+      resolvedApiBase = null;
+      return makeRequest();
+    }
+    return response;
   } catch (error) {
     resolvedApiBase = null;
     return makeRequest();

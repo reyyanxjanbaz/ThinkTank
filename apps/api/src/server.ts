@@ -27,7 +27,28 @@ import type { Store } from "./store/types.js";
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: true });
+const isProduction = process.env.NODE_ENV === "production";
+const allowMemoryStoreByDefault = isProduction ? "false" : "true";
+const allowMemoryStore =
+  (process.env.ALLOW_MEMORY_STORE ?? allowMemoryStoreByDefault).toLowerCase() ===
+  "true";
+
+const parseCorsOrigin = () => {
+  const configured = (process.env.CORS_ORIGIN ?? "").trim();
+  if (!configured) {
+    return true;
+  }
+  const values = configured
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (values.length === 0) {
+    return true;
+  }
+  return values.length === 1 ? values[0] : values;
+};
+
+await app.register(cors, { origin: parseCorsOrigin() });
 
 const MAX_ARTIFACT_BYTES = (() => {
   const parsed = Number.parseInt(process.env.MAX_ARTIFACT_SIZE ?? "", 10);
@@ -116,6 +137,12 @@ const BLOCKLIST: RegExp[] = [
 
 const isBlocked = (value: string) => BLOCKLIST.some((rule) => rule.test(value));
 
+if (!hasSupabaseConfig && !allowMemoryStore) {
+  throw new Error(
+    "Supabase is not configured and ALLOW_MEMORY_STORE is false. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY or explicitly set ALLOW_MEMORY_STORE=true."
+  );
+}
+
 const store: Store = hasSupabaseConfig ? supabaseStore : memoryStore;
 
 const requireUserId = async (request: { headers: { authorization?: string } }, reply: {
@@ -200,7 +227,10 @@ const logStreamError = (error: unknown, message: string) => {
 
 app.get("/health", async () => ({
   status: "ok",
-  time: new Date().toISOString()
+  time: new Date().toISOString(),
+  llmConfigured: hasOpenAIConfig,
+  llmProvider: openaiProvider,
+  persistence: hasSupabaseConfig ? "supabase" : "memory"
 }));
 
 app.get("/api/llm/status", async () => ({
@@ -941,12 +971,22 @@ app.get("/api/sessions/:sessionId/exports", async (request, reply) => {
 const start = async () => {
   try {
     const port = Number(process.env.PORT) || 3001;
+    if (!hasOpenAIConfig) {
+      app.log.warn(
+        "LLM provider is not configured. Streaming endpoints will return openai_not_configured until OPENAI_API_KEY or OPENROUTER_API_KEY is set."
+      );
+    }
+    if (!hasSupabaseConfig) {
+      app.log.warn("Supabase is not configured. Using in-memory store.");
+    }
     app.log.info(
       {
         llmProvider: openaiProvider,
         llmModel: openaiModel,
         llmBaseUrl: openaiBaseUrl,
-        llmConfigured: hasOpenAIConfig
+        llmConfigured: hasOpenAIConfig,
+        persistence: hasSupabaseConfig ? "supabase" : "memory",
+        allowMemoryStore
       },
       "LLM provider configuration loaded"
     );

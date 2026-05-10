@@ -20,6 +20,14 @@ Set `apps/api/.env` with one of the following:
 Notes:
 - If `OPENROUTER_API_KEY` is set, it is used automatically.
 - `OPENAI_BASE_URL` can override the provider endpoint manually.
+- If `OPENAI_MODEL` is set to an OpenRouter-style value (for example `openai/gpt-4o-mini`) while using OpenAI direct, the API normalizes it to `gpt-4o-mini`.
+
+## Deployment-critical env
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are required for persistent sessions.
+- `ALLOW_MEMORY_STORE` controls fallback behavior when Supabase is missing:
+  - Development default: `true`
+  - Production default: `false`
+- `CORS_ORIGIN` can be a single origin or comma-separated list (for example `https://app.example.com,https://staging.example.com`).
 
 ## Endpoints
 - GET /health

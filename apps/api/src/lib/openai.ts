@@ -40,8 +40,14 @@ export const openai = hasOpenAIConfig
     })
   : null;
 
-export const openaiModel =
-  process.env.OPENAI_MODEL ?? (isOpenRouter ? "openai/gpt-4o-mini" : "gpt-4o-mini");
+const configuredModel = (process.env.OPENAI_MODEL ?? "").trim();
+const defaultModel = isOpenRouter ? "openai/gpt-4o-mini" : "gpt-4o-mini";
+const normalizedModel = (configuredModel || defaultModel).replace(
+  /^openai\//,
+  isOpenRouter ? "openai/" : ""
+);
+
+export const openaiModel = normalizedModel;
 
 const temperatureRaw = Number.parseFloat(process.env.OPENAI_TEMPERATURE ?? "0.7");
 
