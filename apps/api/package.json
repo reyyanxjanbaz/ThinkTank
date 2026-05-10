@@ -1,0 +1,28 @@
+{
+  "name": "thinktank-api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@fastify/multipart": "^8.2.0",
+    "@supabase/supabase-js": "^2.45.2",
+    "fastify": "^4.28.1",
+    "openai": "^4.57.0",
+    "pdfkit": "^0.16.0",
+    "pdf-parse": "^1.1.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.2",
+    "@types/pdfkit": "^0.13.4",
+    "@types/pdf-parse": "^1.1.4",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

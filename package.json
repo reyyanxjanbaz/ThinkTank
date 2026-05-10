@@ -1,0 +1,11 @@
+{
+  "name": "thinktank",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "npm run build:api && npm run build:web",
+    "build:api": "npm --prefix apps/api run build",
+    "build:web": "npm --prefix apps/web run build",
+    "typecheck": "npm --prefix apps/web run typecheck && npm --prefix apps/api run build"
+  }
+}
