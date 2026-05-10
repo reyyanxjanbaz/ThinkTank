@@ -129,6 +129,7 @@ type FeedItem = {
 };
 
 type Page = "home" | "war-room" | "personas" | "modes" | "vault" | "guide";
+type AuthMode = "login" | "signup";
 
 type PixelBlock = {
   x: number;
@@ -343,8 +344,14 @@ export default function App() {
   const [authSession, setAuthSession] = useState<SupabaseSession | null>(null);
   const [isAuthInitializing, setIsAuthInitializing] = useState(requiresAuth);
   const [authMessage, setAuthMessage] = useState("");
-  const [emailSignIn, setEmailSignIn] = useState("");
-  const [isEmailSignInLoading, setIsEmailSignInLoading] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
+  const [authRecoveryPassword, setAuthRecoveryPassword] = useState("");
+  const [authRecoveryPasswordConfirm, setAuthRecoveryPasswordConfirm] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [isRecoveryFlow, setIsRecoveryFlow] = useState(false);
   const [mode, setMode] = useState(MODES[0].name);
   const [activePage, setActivePage] = useState<Page>("home");
   const [selectedPersonas, setSelectedPersonas] = useState<string[]>([
@@ -365,6 +372,10 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const accessToken = authSession?.access_token ?? "";
+  const isSignedIn = Boolean(authSession?.access_token);
+  const authRedirectTo =
+    import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() ||
+    (typeof window !== "undefined" ? window.location.origin : undefined);
 
   const refreshSessions = async (tokenOverride?: string) => {
     const token = tokenOverride ?? accessToken;
@@ -397,16 +408,34 @@ export default function App() {
       .then(({ data }) => {
         if (!active) return;
         setAuthSession(data.session ?? null);
+        if (data.session) {
+          setAuthMode("login");
+          setIsRecoveryFlow(false);
+        }
       })
       .finally(() => {
         if (!active) return;
         setIsAuthInitializing(false);
       });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, sessionData) => {
+    const { data } = supabase.auth.onAuthStateChange((event, sessionData) => {
       if (!active) return;
       setAuthSession(sessionData ?? null);
       setIsAuthInitializing(false);
+
+      if (event === "PASSWORD_RECOVERY") {
+        setIsRecoveryFlow(true);
+        setAuthMessage("Password recovery session detected. Set your new password.");
+      }
+
+      if (event === "SIGNED_IN") {
+        setAuthMode("login");
+        setIsRecoveryFlow(false);
+      }
+
+      if (event === "SIGNED_OUT") {
+        setIsRecoveryFlow(false);
+      }
     });
 
     return () => {
@@ -415,22 +444,11 @@ export default function App() {
     };
   }, []);
 
-  const signInAnonymouslyIfNeeded = async () => {
-    if (!requiresAuth || accessToken) {
-      return accessToken;
-    }
-    if (!supabase) {
-      return null;
-    }
-
-    const { data, error } = await supabase.auth.signInAnonymously();
-    if (error || !data.session?.access_token) {
-      return null;
-    }
-
-    setAuthSession(data.session);
-    setAuthMessage("Guest session active for this device.");
-    return data.session.access_token;
+  const clearPasswordInputs = () => {
+    setAuthPassword("");
+    setAuthPasswordConfirm("");
+    setAuthRecoveryPassword("");
+    setAuthRecoveryPasswordConfirm("");
   };
 
   useEffect(() => {
@@ -504,7 +522,7 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleSignIn = async () => {
+  const handleSignInWithGitHub = async () => {
     if (!supabase) {
       setAuthMessage("Supabase not configured.");
       return;
@@ -512,45 +530,169 @@ export default function App() {
 
     setAuthMessage("Redirecting to GitHub...");
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: "github"
+      provider: "github",
+      options: {
+        redirectTo: authRedirectTo
+      }
     });
 
     if (error) {
-      setAuthMessage("Sign-in failed. Check Supabase settings.");
+      setAuthMessage(`GitHub sign-in failed: ${error.message}`);
     }
   };
 
-  const handleEmailSignIn = async () => {
+  const handleEmailPasswordSignIn = async () => {
     if (!supabase) {
       setAuthMessage("Supabase not configured.");
       return;
     }
 
-    const email = emailSignIn.trim();
-    if (!email) {
-      setAuthMessage("Enter an email address first.");
+    const email = authEmail.trim();
+    if (!email || !authPassword) {
+      setAuthMessage("Enter your email and password.");
       return;
     }
 
-    setIsEmailSignInLoading(true);
-    setAuthMessage("Sending email sign-in link...");
+    setIsAuthSubmitting(true);
+    setAuthMessage("Signing in...");
 
-    const { error } = await supabase.auth.signInWithOtp({
+    const { error } = await supabase.auth.signInWithPassword({
       email,
+      password: authPassword
+    });
+
+    if (error) {
+      setAuthMessage(`Login failed: ${error.message}`);
+      setIsAuthSubmitting(false);
+      return;
+    }
+
+    clearPasswordInputs();
+    setAuthMessage("Signed in.");
+    setIsAuthSubmitting(false);
+  };
+
+  const handleEmailPasswordSignUp = async () => {
+    if (!supabase) {
+      setAuthMessage("Supabase not configured.");
+      return;
+    }
+
+    const email = authEmail.trim();
+    if (!email || !authPassword || !authPasswordConfirm) {
+      setAuthMessage("Enter email, password, and confirm password.");
+      return;
+    }
+
+    if (authPassword.length < 8) {
+      setAuthMessage("Use at least 8 characters for password.");
+      return;
+    }
+
+    if (authPassword !== authPasswordConfirm) {
+      setAuthMessage("Passwords do not match.");
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthMessage("Creating account...");
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: authPassword,
       options: {
-        emailRedirectTo: window.location.href
+        emailRedirectTo: authRedirectTo
       }
     });
 
     if (error) {
-      setAuthMessage("Email sign-in failed. Check Supabase email auth settings.");
-      setIsEmailSignInLoading(false);
+      setAuthMessage(`Sign-up failed: ${error.message}`);
+      setIsAuthSubmitting(false);
       return;
     }
 
-    setAuthMessage("Magic link sent. Check your email inbox.");
-    setEmailSignIn("");
-    setIsEmailSignInLoading(false);
+    clearPasswordInputs();
+    if (data.session) {
+      setAuthMessage("Account created and signed in.");
+    } else {
+      setAuthMessage("Account created. Check your email to confirm before login.");
+    }
+    setIsAuthSubmitting(false);
+  };
+
+  const handleSendResetLink = async () => {
+    if (!supabase) {
+      setAuthMessage("Supabase not configured.");
+      return;
+    }
+
+    const email = authEmail.trim();
+    if (!email) {
+      setAuthMessage("Enter your account email to reset password.");
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthMessage("Sending password reset link...");
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: authRedirectTo
+    });
+
+    if (error) {
+      setAuthMessage(`Password reset failed: ${error.message}`);
+      setIsAuthSubmitting(false);
+      return;
+    }
+
+    setAuthMessage("Password reset link sent. Check your email.");
+    setIsAuthSubmitting(false);
+  };
+
+  const handleUpdateRecoveryPassword = async () => {
+    if (!supabase) {
+      setAuthMessage("Supabase not configured.");
+      return;
+    }
+
+    if (!isRecoveryFlow && !authSession) {
+      setAuthMessage("Open the password recovery link from your email first.");
+      return;
+    }
+
+    if (!authRecoveryPassword || !authRecoveryPasswordConfirm) {
+      setAuthMessage("Enter and confirm your new password.");
+      return;
+    }
+
+    if (authRecoveryPassword.length < 8) {
+      setAuthMessage("Use at least 8 characters for the new password.");
+      return;
+    }
+
+    if (authRecoveryPassword !== authRecoveryPasswordConfirm) {
+      setAuthMessage("New passwords do not match.");
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthMessage("Updating password...");
+
+    const { error } = await supabase.auth.updateUser({
+      password: authRecoveryPassword
+    });
+
+    if (error) {
+      setAuthMessage(`Password update failed: ${error.message}`);
+      setIsAuthSubmitting(false);
+      return;
+    }
+
+    clearPasswordInputs();
+    setIsRecoveryFlow(false);
+    setAuthMode("login");
+    setAuthMessage("Password updated. You can now sign in.");
+    setIsAuthSubmitting(false);
   };
 
   const handleSignOut = async () => {
@@ -559,6 +701,7 @@ export default function App() {
     }
 
     await supabase.auth.signOut();
+    clearPasswordInputs();
     setAuthMessage("Signed out.");
   };
 
@@ -597,7 +740,7 @@ export default function App() {
   const handleLaunch = async () => {
     if (isLaunching) return;
 
-    if (requiresAuth && isAuthInitializing) {
+    if (requiresAuth && (isAuthInitializing || !accessToken)) {
       setStatusMessage("Checking sign-in state. Try again in a moment.");
       return;
     }
@@ -615,30 +758,20 @@ export default function App() {
     };
 
     try {
-      let effectiveToken = accessToken;
-      if (requiresAuth && !effectiveToken) {
-        effectiveToken = (await signInAnonymouslyIfNeeded()) ?? "";
-      }
-
-      if (requiresAuth && !effectiveToken) {
-        const localSession = makeLocalSession(mode);
-        setStartedState(
-          localSession,
-          "Local draft session started. Enable anonymous auth or sign in for cloud conversation."
-        );
-        return;
-      }
-
       const response = await createSession(
         {
           title: "Untitled Council",
           mode
         },
-        effectiveToken
+        accessToken
       );
       setStartedState(response.session, "Council online.");
-      await refreshSessions(effectiveToken);
+      await refreshSessions(accessToken);
     } catch (error) {
+      if (requiresAuth) {
+        setStatusMessage("Cloud session launch failed. Check API and Supabase.");
+        return;
+      }
       const localSession = makeLocalSession(mode);
       setStartedState(
         localSession,
@@ -781,7 +914,9 @@ export default function App() {
     let effectiveToken = accessToken;
 
     if (requiresAuth && !effectiveToken) {
-      effectiveToken = (await signInAnonymouslyIfNeeded()) ?? "";
+      setStatusMessage("Sign in to continue.");
+      setIsSending(false);
+      return;
     }
 
     if (activeSession.id.startsWith("local-") && (!requiresAuth || Boolean(effectiveToken))) {
@@ -861,6 +996,11 @@ export default function App() {
       );
 
     if (!useCloudStreaming) {
+      if (requiresAuth) {
+        setStatusMessage("Session unavailable. Start a new cloud session.");
+        setIsSending(false);
+        return;
+      }
       setFeed((prev) => [...prev, userEntry, personaEntry]);
       setPrompt("");
       setStatusMessage(`Streaming ${activePersona} in guest mode...`);
@@ -916,14 +1056,18 @@ export default function App() {
         }
       );
     } catch (error) {
-      setStatusMessage("Cloud streaming failed; retrying in guest mode...");
-      setFeed((prev) =>
-        prev.map((item) => (item.id === responseId ? { ...item, content: "" } : item))
-      );
-      try {
-        await streamGuestResponse();
-      } catch (guestError) {
-        writeStreamFailureToFeed(responseId, guestError);
+      if (requiresAuth) {
+        writeStreamFailureToFeed(responseId, error);
+      } else {
+        setStatusMessage("Cloud streaming failed; retrying in guest mode...");
+        setFeed((prev) =>
+          prev.map((item) => (item.id === responseId ? { ...item, content: "" } : item))
+        );
+        try {
+          await streamGuestResponse();
+        } catch (guestError) {
+          writeStreamFailureToFeed(responseId, guestError);
+        }
       }
     } finally {
       setIsSending(false);
@@ -941,6 +1085,10 @@ export default function App() {
   const handleWatchDemo = () => {
     setStatusMessage("Demo path: choose mode, assemble personas, launch the room, then send one sharp prompt.");
     goToPage("guide");
+  };
+
+  const handleHeaderCta = async () => {
+    await handleStartQuest();
   };
 
   const renderHome = () => (
@@ -1308,48 +1456,154 @@ export default function App() {
 
       <aside className="auth-console">
         <h2>Access Console</h2>
-        <p>{requiresAuth ? "Cloud sessions are enabled through Supabase." : "Supabase is not configured; local/guest behavior is available."}</p>
+        <p>Cloud sessions are secured by Supabase Auth.</p>
         <div className="access-readout">
           <span>Session</span>
           <strong>{session ? "Active" : "Idle"}</strong>
           <span>Access</span>
-          <strong>{requiresAuth ? authSession?.user?.email ?? "Guest / signed out" : "Local mode"}</strong>
+          <strong>{authSession?.user?.email ?? "Signed in"}</strong>
           <span>Persona API</span>
           <strong>{personaStatus}</strong>
         </div>
-        {requiresAuth && (
-          <div className="auth-actions">
-            {authSession ? (
-              <button type="button" className="pixel-button-alt" onClick={handleSignOut}>
-                Sign Out
-              </button>
-            ) : (
-              <>
-                <button type="button" className="pixel-button" onClick={handleSignIn}>
-                  Sign In with GitHub
-                </button>
-                <input
-                  className="pixel-input"
-                  type="email"
-                  value={emailSignIn}
-                  onChange={(event) => setEmailSignIn(event.target.value)}
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                />
-                <button
-                  type="button"
-                  className="pixel-button-alt"
-                  onClick={handleEmailSignIn}
-                  disabled={isEmailSignInLoading}
-                >
-                  {isEmailSignInLoading ? "Sending..." : "Send Magic Link"}
-                </button>
-              </>
-            )}
-          </div>
-        )}
+        <div className="auth-actions">
+          <p className="status-line">Signed in as {authSession?.user?.email ?? authSession?.user?.id}</p>
+          <button type="button" className="pixel-button-alt" onClick={handleSignOut}>
+            Sign Out
+          </button>
+        </div>
         {authMessage && <p className="status-line">{authMessage}</p>}
       </aside>
+    </main>
+  );
+
+  const renderAuthGate = () => (
+    <main className="auth-gate">
+      <section className="auth-gate-shell">
+        <article className="auth-gate-hero">
+          <PageKicker label="Secure council access" value="Supabase Auth" />
+          <h1 className="page-title">Sign in to enter Think Tank</h1>
+          <p className="page-copy">
+            Sessions, artifacts, and exports are tied to your account. Login is required.
+          </p>
+        </article>
+
+        <article className="auth-gate-panel">
+          {isAuthInitializing ? (
+            <p className="status-line">Checking sign-in state...</p>
+          ) : isRecoveryFlow ? (
+            <div className="auth-actions">
+              <h2>Set New Password</h2>
+              <input
+                className="pixel-input"
+                type="password"
+                value={authRecoveryPassword}
+                onChange={(event) => setAuthRecoveryPassword(event.target.value)}
+                placeholder="New password"
+                autoComplete="new-password"
+              />
+              <input
+                className="pixel-input"
+                type="password"
+                value={authRecoveryPasswordConfirm}
+                onChange={(event) => setAuthRecoveryPasswordConfirm(event.target.value)}
+                placeholder="Confirm new password"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={handleUpdateRecoveryPassword}
+                disabled={isAuthSubmitting}
+              >
+                {isAuthSubmitting ? "Updating..." : "Update Password"}
+              </button>
+            </div>
+          ) : (
+            <div className="auth-actions">
+              <div className="auth-tabs" role="tablist" aria-label="Auth mode">
+                <button
+                  type="button"
+                  className="pixel-button-alt auth-tab"
+                  data-active={authMode === "login"}
+                  onClick={() => setAuthMode("login")}
+                >
+                  Log In
+                </button>
+                <button
+                  type="button"
+                  className="pixel-button-alt auth-tab"
+                  data-active={authMode === "signup"}
+                  onClick={() => setAuthMode("signup")}
+                >
+                  Sign Up
+                </button>
+              </div>
+
+              <input
+                className="pixel-input"
+                type="email"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+              <input
+                className="pixel-input"
+                type="password"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="Password"
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              />
+              {authMode === "signup" && (
+                <input
+                  className="pixel-input"
+                  type="password"
+                  value={authPasswordConfirm}
+                  onChange={(event) => setAuthPasswordConfirm(event.target.value)}
+                  placeholder="Confirm password"
+                  autoComplete="new-password"
+                />
+              )}
+
+              <button
+                type="button"
+                className="pixel-button"
+                onClick={authMode === "login" ? handleEmailPasswordSignIn : handleEmailPasswordSignUp}
+                disabled={isAuthSubmitting}
+              >
+                {isAuthSubmitting
+                  ? authMode === "login"
+                    ? "Signing In..."
+                    : "Creating..."
+                  : authMode === "login"
+                    ? "Log In"
+                    : "Create Account"}
+              </button>
+
+              <div className="auth-link-row">
+                <button
+                  type="button"
+                  className="pixel-button-alt auth-link-btn"
+                  onClick={handleSendResetLink}
+                  disabled={isAuthSubmitting}
+                >
+                  Forgot Password
+                </button>
+                <button
+                  type="button"
+                  className="pixel-button-alt auth-link-btn"
+                  onClick={handleSignInWithGitHub}
+                  disabled={isAuthSubmitting}
+                >
+                  Continue with GitHub
+                </button>
+              </div>
+            </div>
+          )}
+          {authMessage && <p className="status-line">{authMessage}</p>}
+        </article>
+      </section>
     </main>
   );
 
@@ -1369,6 +1623,10 @@ export default function App() {
         return renderHome();
     }
   };
+
+  if (requiresAuth && !isSignedIn) {
+    return <div className="min-h-screen app-shell">{renderAuthGate()}</div>;
+  }
 
   return (
     <div className="min-h-screen app-shell">
@@ -1396,7 +1654,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <button type="button" className="pixel-button header-cta" onClick={handleStartQuest}>
+        <button type="button" className="pixel-button header-cta" onClick={() => void handleHeaderCta()}>
           {session ? "Enter Room" : "Start"}
         </button>
       </header>
