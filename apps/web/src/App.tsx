@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import type { Persona, Session } from "./lib/types";
 import {
   createSession,
   getPersonas,
   generateExport,
+  listArtifacts,
   listSessions,
   listTurns,
   streamGuestPersonaResponse,
@@ -128,7 +129,7 @@ type FeedItem = {
   time: string;
 };
 
-type Page = "home" | "war-room" | "personas" | "modes" | "vault" | "guide";
+type Page = "home" | "setup" | "war-room" | "personas" | "modes" | "vault" | "guide";
 type AuthMode = "login" | "signup";
 
 type PixelBlock = {
@@ -146,6 +147,7 @@ const CONFIGURED_API_URL = (
 
 const NAV_ITEMS: Array<{ page: Page; label: string; helper: string }> = [
   { page: "home", label: "Home", helper: "Briefing" },
+  { page: "setup", label: "Setup", helper: "Prep room" },
   { page: "war-room", label: "War Room", helper: "Live session" },
   { page: "personas", label: "Personas", helper: "Build squad" },
   { page: "modes", label: "Modes", helper: "Set pressure" },
@@ -153,16 +155,23 @@ const NAV_ITEMS: Array<{ page: Page; label: string; helper: string }> = [
   { page: "guide", label: "Guide", helper: "How it flows" }
 ];
 
+const PERSONA_STATUS_LABELS = {
+  loading: "Loading roster",
+  ready: "Roster online",
+  error: "Fallback roster"
+} as const;
+
 const makeId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const makeLocalSession = (mode: string): Session => {
+const makeLocalSession = (mode: string, title?: string): Session => {
   const timestamp = new Date().toISOString();
+  const resolvedTitle = title?.trim() || "Untitled Council (Local)";
   return {
     id: `local-${makeId()}`,
-    title: "Untitled Council (Local)",
+    title: resolvedTitle,
     mode,
     status: "active",
     createdAt: timestamp,
@@ -182,6 +191,19 @@ const formatTurnTime = (value: string) => {
     return value;
   }
   return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const formatSessionTime = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 };
 
 const downloadTextFile = (filename: string, content: string, mime: string) => {
@@ -222,6 +244,11 @@ const normalizePersonaText = (value: string) =>
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1");
+
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 
 const renderBlocks = (blocks: PixelBlock[]) =>
   blocks.map((block, index) => (
@@ -391,6 +418,7 @@ export default function App() {
   const [isRecoveryFlow, setIsRecoveryFlow] = useState(false);
   const [mode, setMode] = useState(MODES[0].name);
   const [activePage, setActivePage] = useState<Page>("home");
+  const [sessionTitle, setSessionTitle] = useState("");
   const [selectedPersonas, setSelectedPersonas] = useState<string[]>([
     "Devil",
     "Tyson"
@@ -408,11 +436,27 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
+  const [hasNewFeed, setHasNewFeed] = useState(false);
+  const feedScrollRef = useRef<HTMLDivElement | null>(null);
   const accessToken = authSession?.access_token ?? "";
   const isSignedIn = Boolean(authSession?.access_token);
   const authRedirectTo =
     import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() ||
     (typeof window !== "undefined" ? window.location.origin : undefined);
+  const personaStatusLabel = PERSONA_STATUS_LABELS[personaStatus];
+  const authIdentity = requiresAuth
+    ? authSession?.user?.email ?? authSession?.user?.id ?? "Signed out"
+    : "Local mode";
+  const authStatus = requiresAuth ? (authSession ? "Signed in" : "Signed out") : "No auth required";
+
+  const isFeedNearBottom = (element: HTMLDivElement) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+
+  const scrollFeedToBottom = (behavior: ScrollBehavior = "auto") => {
+    const element = feedScrollRef.current;
+    if (!element) return;
+    element.scrollTo({ top: element.scrollHeight, behavior });
+  };
 
   const refreshSessions = async (tokenOverride?: string) => {
     const token = tokenOverride ?? accessToken;
@@ -543,6 +587,34 @@ export default function App() {
 
   const activeMode = MODES.find((item) => item.name === mode) ?? MODES[0];
   const activePersonaData = personaLookup.get(activePersona);
+
+  useEffect(() => {
+    const element = feedScrollRef.current;
+    if (!element) return;
+    const handleScroll = () => {
+      if (isFeedNearBottom(element)) {
+        setHasNewFeed(false);
+      }
+    };
+    handleScroll();
+    element.addEventListener("scroll", handleScroll);
+    return () => {
+      element.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const element = feedScrollRef.current;
+    if (!element) return;
+    if (isFeedNearBottom(element)) {
+      scrollFeedToBottom();
+      setHasNewFeed(false);
+      return;
+    }
+    if (feed.length > 0) {
+      setHasNewFeed(true);
+    }
+  }, [feed]);
 
   const togglePersona = (name: string) => {
     setSelectedPersonas((prev) => {
@@ -786,10 +858,45 @@ export default function App() {
 
     try {
       const response = await uploadArtifact(session.id, artifactFile, accessToken);
-      setArtifactStatus(`Uploaded. Parsing in progress (id: ${response.artifact.id}).`);
+      setArtifactStatus("Uploaded. Parsing document...");
       setArtifactFile(null);
+
+      const startedAt = Date.now();
+      const maxWaitMs = 20000;
+      const pollIntervalMs = 1000;
+
+      while (Date.now() - startedAt < maxWaitMs) {
+        await wait(pollIntervalMs);
+        const { artifacts } = await listArtifacts(session.id, accessToken);
+        const latest = artifacts.find((artifact) => artifact.id === response.artifact.id);
+        if (!latest) {
+          continue;
+        }
+
+        if (latest.status === "ready") {
+          const parsedLength = latest.parsedText?.trim().length ?? 0;
+          if (parsedLength === 0 && latest.mime === "application/pdf") {
+            setArtifactStatus(
+              "Upload complete, but this PDF has little/no extractable text (likely scanned or image-only)."
+            );
+          } else {
+            setArtifactStatus(`Upload complete. ${latest.filename} is ready for context.`);
+          }
+          return;
+        }
+
+        if (latest.status === "failed") {
+          setArtifactStatus(
+            "Upload succeeded, but parsing failed for this file. Try a text-based PDF/TXT/MD."
+          );
+          return;
+        }
+      }
+
+      setArtifactStatus("Upload succeeded. Parsing is still in progress; retry your prompt in a few seconds.");
     } catch (error) {
-      setArtifactStatus("Upload failed. Check API + Supabase storage.");
+      const message = error instanceof Error ? error.message : "Unknown upload error";
+      setArtifactStatus(message);
     }
   };
 
@@ -801,6 +908,7 @@ export default function App() {
       return;
     }
 
+    const resolvedTitle = sessionTitle.trim() || "Untitled Council";
     setIsLaunching(true);
     setStatusMessage("Initializing council...");
 
@@ -816,7 +924,7 @@ export default function App() {
     try {
       const response = await createSession(
         {
-          title: "Untitled Council",
+          title: resolvedTitle,
           mode
         },
         accessToken
@@ -828,7 +936,7 @@ export default function App() {
         setStatusMessage("Cloud session launch failed. Check API and Supabase.");
         return;
       }
-      const localSession = makeLocalSession(mode);
+      const localSession = makeLocalSession(mode, resolvedTitle);
       setStartedState(
         localSession,
         "API launch failed. Local draft session started for now."
@@ -907,12 +1015,15 @@ export default function App() {
 
   const getStreamFailureMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : "";
+    if (message.includes("API base resolution failed")) {
+      return `${message} From repo root, run "npm run dev", then open ${CONFIGURED_API_URL}/health and confirm status=ok in your browser.`;
+    }
     if (
       message.includes("Failed to fetch") ||
       message.includes("NetworkError") ||
       message.includes("Load failed")
     ) {
-      return `API server is unreachable. Start apps/api with "npm run dev" (or "npm run dev:watch"), then open ${CONFIGURED_API_URL}/health and confirm it returns status=ok.`;
+      return `API server is unreachable. From repo root, run "npm run dev", then open ${CONFIGURED_API_URL}/health and confirm it returns status=ok.`;
     }
     if (message.includes("openai_not_configured")) {
       return "LLM provider is not configured. Add OPENROUTER_API_KEY or OPENAI_API_KEY to apps/api/.env, then restart the API.";
@@ -1132,7 +1243,7 @@ export default function App() {
 
   const handleStartQuest = async () => {
     if (!session) {
-      await handleLaunch();
+      goToPage("setup");
       return;
     }
     goToPage("war-room");
@@ -1150,7 +1261,7 @@ export default function App() {
   const renderHome = () => (
     <main className="app-page home-grid">
       <section className="hero-copy">
-        <PageKicker label="Externalized intelligence OS" value={personaStatus} />
+        <PageKicker label="Externalized intelligence OS" value={personaStatusLabel} />
         <h1 className="hero-title">Never think alone again.</h1>
         <p className="hero-text">
           Think Tank is a retro strategic war room where five opinionated AI minds
@@ -1158,7 +1269,7 @@ export default function App() {
           It is not a chat box. It is a council chamber for ambitious decisions.
         </p>
         <div className="hero-actions">
-          <button type="button" className="pixel-button" onClick={handleStartQuest}>
+          <button type="button" className="pixel-button" onClick={() => goToPage("setup")}>
             Initialize Council
           </button>
           <button type="button" className="pixel-button-alt" onClick={handleWatchDemo}>
@@ -1214,6 +1325,120 @@ export default function App() {
     </main>
   );
 
+  const renderSetup = () => (
+    <main className="app-page setup-grid">
+      <section className="setup-panel">
+        <PageKicker label="Session setup" value={personaStatusLabel} />
+        <h1 className="page-title">Prepare the Council</h1>
+        <p className="page-copy">
+          Choose the pressure, name the mission, and assemble the right minds before you enter the room.
+        </p>
+        <label className="field-label" htmlFor="session-title">
+          Session title
+        </label>
+        <input
+          id="session-title"
+          className="pixel-input"
+          value={sessionTitle}
+          onChange={(event) => setSessionTitle(event.target.value)}
+          placeholder="Untitled Council"
+          autoComplete="off"
+        />
+
+        <div className="setup-section">
+          <div className="setup-section-heading">
+            <h2 className="setup-section-title">Choose a mode</h2>
+            <span className="microcopy">Sets the tone and pressure.</span>
+          </div>
+          <div className="mode-board setup-mode-board" aria-label="Choose a mode">
+            {MODES.map((item, index) => (
+              <button
+                key={item.name}
+                type="button"
+                className="mode-card"
+                data-active={mode === item.name}
+                aria-pressed={mode === item.name}
+                onClick={() => setMode(item.name)}
+              >
+                <span className="mode-number">0{index + 1}</span>
+                <h2>{item.name}</h2>
+                <p>{item.description}</p>
+                <strong>{item.intent}</strong>
+                <span>{item.ritual}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="setup-panel">
+        <div className="setup-section-heading">
+          <h2 className="setup-section-title">Invite personas</h2>
+          <span className="microcopy">{selectedPersonas.length} invited</span>
+        </div>
+        <div className="persona-deck setup-persona-deck">
+          {personas.map((persona) => {
+            const meta = PERSONA_META[persona.name];
+            const selected = selectedPersonas.includes(persona.name);
+            return (
+              <article key={persona.name} className="persona-card" data-selected={selected}>
+                <div className="persona-card-top">
+                  <PixelAvatar name={persona.name} />
+                  <div>
+                    <span className="persona-stat">{meta?.stat ?? persona.role}</span>
+                    <h2>{persona.name}</h2>
+                    <p>{meta?.archetype ?? persona.role}</p>
+                  </div>
+                </div>
+                <p className="persona-quote">{meta?.quote ?? persona.tagline}</p>
+                <div className="persona-details">
+                  <span>{meta?.species ?? persona.role}</span>
+                  <span>{persona.focus}</span>
+                  <span>{meta?.signal ?? persona.tagline}</span>
+                </div>
+                <div className="persona-actions">
+                  <button
+                    type="button"
+                    className="pixel-button-alt"
+                    aria-pressed={selected}
+                    onClick={() => togglePersona(persona.name)}
+                  >
+                    {selected ? "Dismiss" : "Invite"}
+                  </button>
+                  <button
+                    type="button"
+                    className="pixel-button-alt"
+                    aria-pressed={activePersona === persona.name}
+                    onClick={() => setActivePersona(persona.name)}
+                  >
+                    {activePersona === persona.name ? "Speaking" : "Make Speaker"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="setup-actions">
+        <div className="setup-summary" aria-label="Session summary">
+          <span className="status-chip">Mode: {mode}</span>
+          <span className="status-chip">Speaker: {activePersona}</span>
+          <span className="status-chip">Roster: {selectedPersonas.length} minds</span>
+        </div>
+        <button
+          type="button"
+          className="pixel-button"
+          onClick={handleLaunch}
+          disabled={isLaunching}
+        >
+          {isLaunching ? "Booting..." : "Launch Room"}
+        </button>
+        <button type="button" className="pixel-button-alt" onClick={() => goToPage("war-room")}>Skip to War Room</button>
+      </section>
+    </main>
+  );
+
   const renderWarRoom = () => (
     <main className="app-page war-grid">
       <section className="room-stage">
@@ -1221,6 +1446,10 @@ export default function App() {
           <div>
             <PageKicker label="Live council chamber" value={mode} />
             <h1 className="page-title">War Room</h1>
+            <div className="room-status-row">
+              <span className="status-chip">Session: {session?.title ?? (sessionTitle.trim() || "Untitled")}</span>
+              <span className="status-chip">Speaker: {activePersona}</span>
+            </div>
           </div>
           <button
             type="button"
@@ -1239,6 +1468,8 @@ export default function App() {
               type="button"
               className="persona-monitor"
               data-speaking={activePersona === persona.name}
+              aria-pressed={activePersona === persona.name}
+              aria-label={`Set ${persona.name} as speaker`}
               onClick={() => setActivePersona(persona.name)}
             >
               <PixelAvatar name={persona.name} />
@@ -1259,9 +1490,20 @@ export default function App() {
               <h2>Council Feed</h2>
               <p>{session ? `Session ${session.id.slice(0, 8)}` : "Launch a room to begin."}</p>
             </div>
-            <span className="status-chip">{statusMessage}</span>
+            <div className="panel-actions">
+              <span className="status-chip" role="status" aria-live="polite">{statusMessage}</span>
+              {hasNewFeed && (
+                <button
+                  type="button"
+                  className="pixel-button-alt jump-latest"
+                  onClick={() => scrollFeedToBottom("smooth")}
+                >
+                  Jump to latest
+                </button>
+              )}
+            </div>
           </div>
-          <div className="debate-scroll">
+          <div className="debate-scroll" ref={feedScrollRef}>
             {feed.length === 0 && (
               <div className="empty-feed">
                 <strong>No turns yet.</strong>
@@ -1291,8 +1533,11 @@ export default function App() {
         <section className="control-card hot-card">
           <h2>Turn Console</h2>
           <p className="microcopy">One human prompt. One active mind. Change the speaker any time.</p>
-          <label className="field-label">Active Speaker</label>
+          <label className="field-label" htmlFor="active-speaker">
+            Active Speaker
+          </label>
           <select
+            id="active-speaker"
             className="pixel-select"
             value={activePersona}
             onChange={(event) => setActivePersona(event.target.value)}
@@ -1303,8 +1548,11 @@ export default function App() {
               </option>
             ))}
           </select>
-          <label className="field-label">Prompt</label>
+          <label className="field-label" htmlFor="council-prompt">
+            Prompt
+          </label>
           <textarea
+            id="council-prompt"
             className="pixel-textarea command-input"
             placeholder="What are we deciding, building, naming, testing, or killing?"
             value={prompt}
@@ -1324,12 +1572,28 @@ export default function App() {
         <section className="control-card">
           <h2>Context Cargo</h2>
           <p className="microcopy">Attach source material when the council needs evidence, not vibes.</p>
+          <label className="field-label" htmlFor="artifact-upload">
+            Artifact file
+          </label>
           <input
+            id="artifact-upload"
             className="pixel-input"
             type="file"
             accept=".pdf,.txt,.md"
             onChange={(event) => setArtifactFile(event.target.files?.[0] ?? null)}
           />
+          {artifactFile && (
+            <div className="file-row">
+              <span>{artifactFile.name} ({Math.round(artifactFile.size / 1024)} KB)</span>
+              <button
+                type="button"
+                className="pixel-button-alt"
+                onClick={() => setArtifactFile(null)}
+              >
+                Remove
+              </button>
+            </div>
+          )}
           <div className="inline-actions">
             <button
               type="button"
@@ -1341,7 +1605,11 @@ export default function App() {
             </button>
             <span>PDF, TXT, MD. Max 5MB.</span>
           </div>
-          {artifactStatus && <p className="status-line">{artifactStatus}</p>}
+          {artifactStatus && (
+            <p className="status-line" role="status" aria-live="polite">
+              {artifactStatus}
+            </p>
+          )}
         </section>
 
         <section className="control-card">
@@ -1355,7 +1623,11 @@ export default function App() {
               PDF
             </button>
           </div>
-          {exportStatus && <p className="status-line">{exportStatus}</p>}
+          {exportStatus && (
+            <p className="status-line" role="status" aria-live="polite">
+              {exportStatus}
+            </p>
+          )}
         </section>
       </aside>
     </main>
@@ -1394,10 +1666,20 @@ export default function App() {
                 <span>{meta?.signal ?? persona.tagline}</span>
               </div>
               <div className="persona-actions">
-                <button type="button" className="pixel-button-alt" onClick={() => togglePersona(persona.name)}>
+                <button
+                  type="button"
+                  className="pixel-button-alt"
+                  aria-pressed={selected}
+                  onClick={() => togglePersona(persona.name)}
+                >
                   {selected ? "Dismiss" : "Invite"}
                 </button>
-                <button type="button" className="pixel-button-alt" onClick={() => setActivePersona(persona.name)}>
+                <button
+                  type="button"
+                  className="pixel-button-alt"
+                  aria-pressed={activePersona === persona.name}
+                  onClick={() => setActivePersona(persona.name)}
+                >
                   {activePersona === persona.name ? "Speaking" : "Make Speaker"}
                 </button>
               </div>
@@ -1427,6 +1709,7 @@ export default function App() {
             type="button"
             className="mode-card"
             data-active={mode === item.name}
+            aria-pressed={mode === item.name}
             onClick={() => setMode(item.name)}
           >
             <span className="mode-number">0{index + 1}</span>
@@ -1470,7 +1753,7 @@ export default function App() {
           <article key={item.id} className="vault-card" data-current={session?.id === item.id}>
             <span className="vault-mode">{item.mode ?? "Council"}</span>
             <h2>{item.title ?? "Untitled Council"}</h2>
-            <p>Created {formatTurnTime(item.createdAt)}</p>
+            <p>Created {formatSessionTime(item.createdAt)}</p>
             <button type="button" className="pixel-button-alt" onClick={() => handleLoadSession(item)}>
               Load Into War Room
             </button>
@@ -1517,12 +1800,14 @@ export default function App() {
           <span>Session</span>
           <strong>{session ? "Active" : "Idle"}</strong>
           <span>Access</span>
-          <strong>{authSession?.user?.email ?? "Signed in"}</strong>
+          <strong>{authIdentity}</strong>
           <span>Persona API</span>
-          <strong>{personaStatus}</strong>
+          <strong>{personaStatusLabel}</strong>
         </div>
         <div className="auth-actions">
-          <p className="status-line">Signed in as {authSession?.user?.email ?? authSession?.user?.id}</p>
+          <p className="status-line" role="status" aria-live="polite">
+            Access: {authStatus}
+          </p>
           <button type="button" className="pixel-button-alt" onClick={handleSignOut}>
             Sign Out
           </button>
@@ -1549,7 +1834,9 @@ export default function App() {
           ) : isRecoveryFlow ? (
             <div className="auth-actions">
               <h2>Set New Password</h2>
+              <label className="field-label" htmlFor="recovery-password">New password</label>
               <input
+                id="recovery-password"
                 className="pixel-input"
                 type="password"
                 value={authRecoveryPassword}
@@ -1557,7 +1844,9 @@ export default function App() {
                 placeholder="New password"
                 autoComplete="new-password"
               />
+              <label className="field-label" htmlFor="recovery-password-confirm">Confirm new password</label>
               <input
+                id="recovery-password-confirm"
                 className="pixel-input"
                 type="password"
                 value={authRecoveryPasswordConfirm}
@@ -1565,6 +1854,7 @@ export default function App() {
                 placeholder="Confirm new password"
                 autoComplete="new-password"
               />
+              <p className="microcopy">Minimum 8 characters.</p>
               <button
                 type="button"
                 className="pixel-button"
@@ -1581,6 +1871,8 @@ export default function App() {
                   type="button"
                   className="pixel-button-alt auth-tab"
                   data-active={authMode === "login"}
+                  role="tab"
+                  aria-selected={authMode === "login"}
                   onClick={() => setAuthMode("login")}
                 >
                   Log In
@@ -1589,13 +1881,16 @@ export default function App() {
                   type="button"
                   className="pixel-button-alt auth-tab"
                   data-active={authMode === "signup"}
+                  role="tab"
+                  aria-selected={authMode === "signup"}
                   onClick={() => setAuthMode("signup")}
                 >
                   Sign Up
                 </button>
               </div>
-
+              <label className="field-label" htmlFor="auth-email">Email</label>
               <input
+                id="auth-email"
                 className="pixel-input"
                 type="email"
                 value={authEmail}
@@ -1603,7 +1898,9 @@ export default function App() {
                 placeholder="you@example.com"
                 autoComplete="email"
               />
+              <label className="field-label" htmlFor="auth-password">Password</label>
               <input
+                id="auth-password"
                 className="pixel-input"
                 type="password"
                 value={authPassword}
@@ -1612,15 +1909,20 @@ export default function App() {
                 autoComplete={authMode === "login" ? "current-password" : "new-password"}
               />
               {authMode === "signup" && (
-                <input
-                  className="pixel-input"
-                  type="password"
-                  value={authPasswordConfirm}
-                  onChange={(event) => setAuthPasswordConfirm(event.target.value)}
-                  placeholder="Confirm password"
-                  autoComplete="new-password"
-                />
+                <>
+                  <label className="field-label" htmlFor="auth-password-confirm">Confirm password</label>
+                  <input
+                    id="auth-password-confirm"
+                    className="pixel-input"
+                    type="password"
+                    value={authPasswordConfirm}
+                    onChange={(event) => setAuthPasswordConfirm(event.target.value)}
+                    placeholder="Confirm password"
+                    autoComplete="new-password"
+                  />
+                </>
               )}
+              <p className="microcopy">Minimum 8 characters.</p>
 
               <button
                 type="button"
@@ -1657,7 +1959,11 @@ export default function App() {
               </div>
             </div>
           )}
-          {authMessage && <p className="status-line">{authMessage}</p>}
+          {authMessage && (
+            <p className="status-line" role="status" aria-live="polite">
+              {authMessage}
+            </p>
+          )}
         </article>
       </section>
     </main>
@@ -1665,6 +1971,8 @@ export default function App() {
 
   const renderActivePage = () => {
     switch (activePage) {
+      case "setup":
+        return renderSetup();
       case "war-room":
         return renderWarRoom();
       case "personas":
@@ -1703,6 +2011,7 @@ export default function App() {
               type="button"
               className="nav-link"
               data-current={activePage === item.page}
+              aria-current={activePage === item.page ? "page" : undefined}
               onClick={() => goToPage(item.page)}
             >
               <span>{item.label}</span>

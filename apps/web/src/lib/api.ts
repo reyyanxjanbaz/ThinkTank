@@ -1,4 +1,14 @@
 import type { Persona, Session, Turn } from "./types";
+type Artifact = {
+  id: string;
+  sessionId: string;
+  filename: string;
+  mime: string;
+  size: number;
+  status: "uploaded" | "parsing" | "ready" | "failed";
+  parsedText: string | null;
+  createdAt: string;
+};
 
 const configuredApiUrl = (
   import.meta.env.VITE_API_URL ?? "http://localhost:3001"
@@ -7,18 +17,42 @@ const configuredApiUrl = (
 let resolvedApiBase: string | null = null;
 let resolvingApiBase: Promise<string> | null = null;
 
+const LOOPBACK_API_URLS = [
+  "http://127.0.0.1:3001",
+  "http://localhost:3001",
+  "http://[::1]:3001"
+];
+
+const isLoopbackHost = (hostname: string) =>
+  hostname === "localhost" ||
+  hostname === "127.0.0.1" ||
+  hostname === "::1" ||
+  hostname === "[::1]";
+
+const toErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+const formatApiBase = (apiBase: string) => apiBase || "same-origin";
+
 const getApiUrls = () => {
-  const urls = [configuredApiUrl, "", "http://localhost:3001", "http://127.0.0.1:3001"];
+  const urls = ["", configuredApiUrl, ...LOOPBACK_API_URLS];
 
   if (typeof window !== "undefined") {
     const { hostname, protocol } = window.location;
-    if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
+    if (hostname && !isLoopbackHost(hostname)) {
       urls.push(`${protocol}//${hostname}:3001`);
       urls.push(`http://${hostname}:3001`);
+      urls.push(`https://${hostname}:3001`);
     }
   }
 
-  return Array.from(new Set(urls.filter((value) => value !== undefined)));
+  return Array.from(
+    new Set(
+      urls.filter(
+        (value): value is string => value !== undefined && value !== null
+      )
+    )
+  );
 };
 
 const probeApiBase = async (apiUrl: string) => {
@@ -54,7 +88,7 @@ const resolveApiBase = async () => {
 
   if (!resolvingApiBase) {
     resolvingApiBase = (async () => {
-      let lastError: unknown = null;
+      const attempts: Array<{ base: string; error: string }> = [];
 
       for (const apiUrl of getApiUrls()) {
         try {
@@ -62,13 +96,17 @@ const resolveApiBase = async () => {
           resolvedApiBase = healthyBase;
           return healthyBase;
         } catch (error) {
-          lastError = error;
+          attempts.push({
+            base: formatApiBase(apiUrl),
+            error: toErrorMessage(error)
+          });
         }
       }
 
-      throw lastError instanceof Error
-        ? lastError
-        : new Error("API server is unreachable");
+      const detail = attempts
+        .map((attempt) => `${attempt.base} -> ${attempt.error}`)
+        .join(" | ");
+      throw new Error(`API base resolution failed. ${detail}`);
     })().finally(() => {
       resolvingApiBase = null;
     });
@@ -211,11 +249,25 @@ export const uploadArtifact = async (
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`Upload failed (${response.status}): ${errorBody}`);
+    let detail = errorBody;
+    try {
+      const parsed = JSON.parse(errorBody) as { error?: string; message?: string };
+      detail = parsed.message ?? parsed.error ?? errorBody;
+    } catch {
+      // keep raw error body
+    }
+    throw new Error(`Upload failed (${response.status}): ${detail}`);
   }
 
-  return response.json() as Promise<{ artifact: { id: string; status: string } }>;
+  return response.json() as Promise<{ artifact: Artifact }>;
 };
+
+export const listArtifacts = (sessionId: string, accessToken?: string) =>
+  request<{ artifacts: Artifact[] }>(
+    `/api/sessions/${sessionId}/artifacts`,
+    undefined,
+    accessToken
+  );
 
 const readTokenStream = async (response: Response, handlers?: StreamHandlers) => {
   if (!response.ok) {

@@ -10,7 +10,11 @@ import {
   buildSystemPrompt,
   type PromptHistoryItem
 } from "./prompts/buildPrompt.js";
-import { parseArtifactBuffer, limitText } from "./lib/artifactParser.js";
+import {
+  parseArtifactBuffer,
+  detectArtifactKind,
+  limitText
+} from "./lib/artifactParser.js";
 import { buildSessionMarkdown, renderPdfBuffer } from "./lib/exports.js";
 import {
   openaiBaseUrl,
@@ -57,6 +61,28 @@ const MAX_ARTIFACT_BYTES = (() => {
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "artifacts";
 const EXPORT_BUCKET = process.env.SUPABASE_EXPORT_BUCKET ?? "exports";
+const UNSAFE_FILENAME_CHARS = /[^A-Za-z0-9._ -]/g;
+
+const normalizeUploadedFilename = (value: string) => {
+  const trimmed = value.trim().replaceAll("\\", "/");
+  const basename = trimmed.split("/").pop() ?? "artifact";
+  const sanitized = basename
+    .replace(UNSAFE_FILENAME_CHARS, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return sanitized || "artifact";
+};
+
+const inferContentType = (kind: "pdf" | "text", filename: string) => {
+  if (kind === "pdf") {
+    return "application/pdf";
+  }
+  const normalized = filename.toLowerCase();
+  if (normalized.endsWith(".md")) {
+    return "text/markdown";
+  }
+  return "text/plain";
+};
 
 await app.register(multipart, {
   limits: {
@@ -857,6 +883,10 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
     try {
       fileData = await request.file();
     } catch (error) {
+      const maybeMultipartError = error as { code?: string } | null;
+      if (maybeMultipartError?.code === "FST_REQ_FILE_TOO_LARGE") {
+        return reply.code(400).send({ error: "file_too_large" });
+      }
       return reply.code(400).send({ error: "invalid_upload" });
     }
 
@@ -864,7 +894,8 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
       return reply.code(400).send({ error: "missing_file" });
     }
 
-    const { filename, mimetype, file } = fileData;
+    const { filename: rawFilename, mimetype, file } = fileData;
+    const filename = normalizeUploadedFilename(rawFilename);
     const chunks: Buffer[] = [];
 
     for await (const chunk of file) {
@@ -876,10 +907,20 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
       return reply.code(400).send({ error: "file_too_large" });
     }
 
+    const artifactKind = detectArtifactKind(buffer, mimetype, filename);
+    if (!artifactKind) {
+      return reply.code(415).send({
+        error: "unsupported_file_type",
+        message: "Only PDF, TXT, and MD files are supported."
+      });
+    }
+
+    const storageContentType = inferContentType(artifactKind, filename);
+
     const artifact = await store.addArtifact({
       sessionId,
       filename,
-      mime: mimetype,
+      mime: storageContentType,
       size: buffer.length,
       status: "parsing"
     });
@@ -889,7 +930,7 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
       const { error: uploadError } = await supabase.storage
         .from(STORAGE_BUCKET)
         .upload(storagePath, buffer, {
-          contentType: mimetype,
+          contentType: storageContentType,
           upsert: false
         });
       if (uploadError) {
@@ -899,12 +940,25 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
 
     void (async () => {
       try {
-        const parsedText = await parseArtifactBuffer(buffer, mimetype);
+        const parsedText = await parseArtifactBuffer(
+          buffer,
+          storageContentType,
+          filename
+        );
         await store.updateArtifact(artifact.id, {
           status: "ready",
           parsedText: limitText(parsedText)
         });
       } catch (error) {
+        app.log.error(
+          {
+            artifactId: artifact.id,
+            sessionId,
+            filename,
+            err: error
+          },
+          "Artifact parsing failed"
+        );
         await store.updateArtifact(artifact.id, {
           status: "failed"
         });
@@ -913,7 +967,22 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
 
     return { artifact };
   } catch (error) {
-    handleStoreError(reply, error);
+    app.log.error(
+      {
+        sessionId,
+        err: error
+      },
+      "Artifact upload failed"
+    );
+    if (error instanceof Error) {
+      return reply.code(500).send({
+        error: "upload_failed",
+        message: error.message
+      });
+    }
+    return reply.code(500).send({
+      error: "upload_failed"
+    });
   }
 });
 

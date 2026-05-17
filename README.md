@@ -18,6 +18,8 @@ This starts both:
 - API on `http://localhost:3001`
 - Web on `http://localhost:5173`
 
+If either port is already active, the root dev runner reuses that running service instead of crashing.
+
 Optional:
 - `npm run dev:watch` to run API in watch mode as well.
 

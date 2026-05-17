@@ -176,7 +176,7 @@ textarea:focus-visible {
 
 .page-nav {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
   padding: 8px;
   border: 2px solid rgba(102, 95, 58, 0.8);
@@ -222,6 +222,60 @@ textarea:focus-visible {
   width: min(1240px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 38px 0 72px;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.setup-panel {
+  border: 2px solid var(--color-border);
+  background:
+    linear-gradient(180deg, rgba(31, 40, 26, 0.96), rgba(18, 15, 10, 0.96)),
+    var(--color-panel);
+  box-shadow: 5px 5px 0 var(--shadow-hard), inset 0 0 0 2px rgba(255, 241, 199, 0.035);
+  padding: 20px;
+}
+
+.setup-section {
+  margin-top: 18px;
+}
+
+.setup-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.setup-section-title {
+  margin: 0;
+  color: var(--color-cyan);
+  font-size: 14px;
+  line-height: 1.4;
+  font-family: "Press Start 2P", system-ui, sans-serif;
+}
+
+.setup-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border: 2px solid var(--color-border);
+  background: rgba(7, 6, 4, 0.5);
+  box-shadow: 4px 4px 0 var(--shadow-hard);
+  padding: 16px;
+}
+
+.setup-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .home-grid {
@@ -514,6 +568,13 @@ textarea:focus-visible {
   padding: 20px;
 }
 
+.room-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .stage-header,
 .page-split-heading,
 .panel-heading {
@@ -523,6 +584,13 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 18px;
   align-items: flex-start;
+}
+
+.panel-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .page-title {
@@ -620,6 +688,11 @@ textarea:focus-visible {
   color: var(--color-muted);
   font-size: 17px;
   line-height: 1.24;
+}
+
+.jump-latest {
+  min-height: 32px;
+  font-size: 9px;
 }
 
 .debate-scroll {
@@ -762,6 +835,20 @@ textarea:focus-visible {
 
 .inline-actions {
   margin-top: 10px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  border: 1px solid rgba(102, 95, 58, 0.8);
+  background: rgba(7, 6, 4, 0.35);
+  padding: 8px 10px;
+  color: var(--color-ink);
+  font-size: 16px;
+  line-height: 1.3;
 }
 
 .status-line {
@@ -1129,14 +1216,15 @@ textarea:focus-visible {
 
   .page-nav {
     grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     order: 3;
   }
 
   .home-grid,
   .war-grid,
   .guide-grid,
-  .auth-gate-shell {
+  .auth-gate-shell,
+  .setup-grid {
     grid-template-columns: 1fr;
   }
 
