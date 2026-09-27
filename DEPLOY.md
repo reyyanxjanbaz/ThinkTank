@@ -36,7 +36,7 @@ Any other host that runs a persistent Node 22+ process (Supabase needs its built
 4. Deploy. The API refuses to start in production when a required variable is missing or invalid. It prints one list of every problem, so read the Render logs if the deploy fails.
 5. Note the service URL, for example `https://thinktank-api.onrender.com`.
 
-Pick a paid instance or keep one warm: free Render instances sleep, and the first request after a sleep takes about 30 s.
+Free Render instances sleep after 15 idle minutes, and the first request after a sleep takes about 30 s. The API prevents this itself: it pings its own `/health` every 10 minutes (see `KEEP_AWAKE`). An always-awake free service uses about 730 of the 750 free instance hours a month, so it only fits if it's your only free Render service. The ping can't wake the service after a crash or a manual suspend; only a real request or a redeploy does.
 
 Manual alternative (any Node host):
 ```bash
@@ -88,6 +88,9 @@ Caching (from `vercel.json`):
 | `OPENROUTER_APP_NAME` | no | `Think Tank` | App name sent to OpenRouter. |
 | `MAX_ARTIFACT_SIZE` | no | `5242880` | Maximum upload size in bytes. |
 | `RATE_LIMIT_MAX` | no | `30` | LLM requests per client IP per minute, counted per endpoint (the two streams and titles). |
+| `KEEP_AWAKE` | no | on | The API pings its own public `/health` (a `HEAD`, no body, no database or LLM) so Render's free tier doesn't sleep it after 15 idle minutes. Set to `false` on a paid instance, which never sleeps. |
+| `KEEP_AWAKE_MINUTES` | no | `10` | Ping interval, 1–14 minutes. |
+| `KEEP_AWAKE_URL` | no | `RENDER_EXTERNAL_URL` | The public URL to ping. Render provides `RENDER_EXTERNAL_URL` itself, so leave this empty there. |
 | `PROMPT_PREVIEW` | no | `false` | Enables the debug endpoint `POST /api/prompt-preview`. Keep it `false`. |
 
 ### Web (`apps/web`, set on Vercel, public and baked in at build time)

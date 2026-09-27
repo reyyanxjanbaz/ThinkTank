@@ -1,7 +1,7 @@
 /*
   Phones. Loaded after pwa.css, so it refines the shared rules instead of rewriting them.
-  - The room reads like a native chat: a flat top bar, tight dialogue windows whose portrait
-    sits inside the text, and the composer on the bottom edge, where the thumb is.
+  - The room reads like a native chat: a flat top bar, tight dialogue windows (portrait tile and
+    nameplate on the top edge, text full width), and the composer on the bottom edge.
   - The seat chips keep their names and × but ride one scrolling row, with Everyone pinned left,
     so the composer is one chip row tall instead of two or three.
   - Pressure and the council panel open as bottom sheets.
@@ -436,6 +436,10 @@
   .welcome-pressure {
     margin: 14px auto 14px;
     padding: 12px;
+  }
+
+  .welcome .pressure-desc {
+    display: none;
   }
 
   .council,

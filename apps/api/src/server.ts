@@ -339,7 +339,8 @@ const openEventStream = (reply: FastifyReply) => {
   reply.raw.flushHeaders?.();
 };
 
-app.get("/health", async () => ({
+// Quiet at info level: the keep-awake ping (below) hits this every few minutes.
+app.get("/health", { logLevel: "warn" }, async () => ({
   status: "ok",
   time: new Date().toISOString(),
   llmConfigured: hasOpenAIConfig,
@@ -1256,10 +1257,45 @@ const start = async () => {
       "LLM provider configuration loaded"
     );
     await app.listen({ port, host: process.env.HOST?.trim() || "0.0.0.0" });
+    keepAwake();
   } catch (error) {
     app.log.error(error);
     process.exit(1);
   }
+};
+
+// Render's free tier sleeps a service after 15 minutes without inbound traffic, and the next
+// visitor waits ~30 s for it to wake. So the API pings its own public URL (through Render's
+// proxy, which is what counts as traffic) every few minutes. It is the lightest request there
+// is: HEAD /health, no body, no database, no LLM. Render sets RENDER_EXTERNAL_URL itself;
+// locally there is no public URL, so nothing runs. KEEP_AWAKE=false turns it off.
+let keepAwakeTimer: NodeJS.Timeout | undefined;
+const keepAwake = () => {
+  const baseUrl = (process.env.KEEP_AWAKE_URL || process.env.RENDER_EXTERNAL_URL || "").trim().replace(/\/+$/, "");
+  if (!baseUrl || process.env.KEEP_AWAKE?.trim().toLowerCase() === "false") return;
+  const minutes = Math.min(14, Math.max(1, Number(process.env.KEEP_AWAKE_MINUTES) || 10));
+  const target = `${baseUrl}/health`;
+  let failing = false;
+  const ping = async () => {
+    try {
+      const response = await fetch(target, {
+        method: "HEAD",
+        headers: { "user-agent": "thinktank-keep-awake" },
+        signal: AbortSignal.timeout(10_000)
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (failing) app.log.info("keep-awake ping recovered");
+      failing = false;
+    } catch (error) {
+      // Log the first failure of a streak only; the next tick simply tries again.
+      if (!failing) app.log.warn({ err: error, target }, "keep-awake ping failed");
+      failing = true;
+    }
+  };
+  keepAwakeTimer = setInterval(ping, minutes * 60_000);
+  // Never the reason the process stays alive, and never in the way of a shutdown.
+  keepAwakeTimer.unref();
+  app.log.info({ target, everyMinutes: minutes }, "keep-awake ping on");
 };
 
 // Hosts send SIGTERM before replacing an instance: stop taking requests, let in-flight ones
@@ -1269,6 +1305,7 @@ let shuttingDown = false;
 const shutdown = (signal: NodeJS.Signals) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(keepAwakeTimer);
   app.log.info({ signal }, "shutting down");
   const timer = setTimeout(() => {
     app.log.warn("graceful shutdown timed out; exiting");
