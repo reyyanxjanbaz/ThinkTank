@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import { MODES } from "./lib/council";
+import { commandForMode } from "./lib/tokens";
 import "./pressure.css";
 
 /**
@@ -300,7 +301,17 @@ function CompactPressure({ mode, onChange }: { mode: string; onChange: (mode: st
       </button>
       {open && (
         <div className="pressure-popover" role="dialog" aria-label="Set the pressure">
-          <PressureControl variant="panel" mode={mode} onChange={onChange} />
+          {/* The same dial as the welcome screen: one pressure control, shown in two places. */}
+          <PressureControl variant="dial" mode={mode} onChange={onChange} />
+          <p className="pressure-tip">
+            Or start a message with{" "}
+            {PRESSURE.map((stop, index) => (
+              <span key={stop.mode}>
+                {index > 0 && " "}
+                <kbd style={heatStyle(stop)}>/{commandForMode(stop.mode)?.word}</kbd>
+              </span>
+            ))}
+          </p>
         </div>
       )}
     </div>

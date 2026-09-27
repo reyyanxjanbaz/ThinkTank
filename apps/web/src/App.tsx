@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { CSSProperties } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import type { Persona, Session, Turn } from "./lib/types";
 import {
   createSession,
+  deleteSession,
   getPersonas,
   generateExport,
   generateTitle,
@@ -19,13 +20,14 @@ import {
 import { hasSupabaseConfig, supabase } from "./lib/supabaseClient";
 import { PersonaSprite } from "./sprites";
 import Sidebar from "./Sidebar";
-import { PressureControl, PressureStrip } from "./Pressure";
+import { HeatBars, PRESSURE, PressureControl, PressureStrip, pressureFor } from "./Pressure";
 import Home from "./Home";
 import CouncilPanel from "./CouncilPanel";
+import Composer from "./Composer";
+import { commandForMode, parsePrompt } from "./lib/tokens";
 import {
   FALLBACK_PERSONAS,
   MODES,
-  PERSONA_META,
   STARTER_PROMPTS,
   personaStyle
 } from "./lib/council";
@@ -38,13 +40,15 @@ type FeedItem = {
   speaker: string;
   content: string;
   time: string;
+  /** The stream failed: content is the error note, not a saved reply. */
+  failed?: boolean;
 };
 
 type AuthMode = "login" | "signup";
 
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const CONFIGURED_API_URL = (
-  import.meta.env.VITE_API_URL ?? "http://localhost:3001"
+  import.meta.env.VITE_API_URL?.trim() || (import.meta.env.PROD ? "" : "http://localhost:3001")
 ).replace(/\/$/, "");
 
 const makeId = () =>
@@ -218,8 +222,6 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [hasNewFeed, setHasNewFeed] = useState(false);
-  // Set when someone tries to unseat the last mind on the welcome screen, so the refusal is never silent.
-  const [refusedWelcomeSeat, setRefusedWelcomeSeat] = useState<string | null>(null);
   const [view, setView] = useState<"home" | "app">(readView);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -424,8 +426,19 @@ export default function App() {
     }
   }, [selectedPersonas, personas, activePersona]);
 
-  const askTargets = selectedPersonas.filter((name) => askList.includes(name));
-  const askEveryone = selectedPersonas.length > 1 && askTargets.length === selectedPersonas.length;
+  const personaNames = useMemo(() => personas.map((persona) => persona.name), [personas]);
+  // "/court" and "@Bucks" typed in the message. Parsed once for the highlight, the hints and the send.
+  const parsed = useMemo(() => parsePrompt(prompt, personaNames), [prompt, personaNames]);
+  const chipTargets = selectedPersonas.filter((name) => askList.includes(name));
+  // A mention wins over the chips for this message, and may call in a benched mind. Answers keep seat order.
+  const mentionsLead = parsed.mentions.length > 0;
+  const askTargets = mentionsLead
+    ? personaNames.filter((name) => parsed.mentions.includes(name))
+    : chipTargets;
+  const askEveryone =
+    selectedPersonas.length > 1 &&
+    askTargets.length === selectedPersonas.length &&
+    askTargets.every((name) => selectedPersonas.includes(name));
 
   const personaLookup = useMemo(() => {
     const map = new Map(personas.map((persona) => [persona.name, persona]));
@@ -459,7 +472,8 @@ export default function App() {
 
   useEffect(() => {
     const element = feedScrollRef.current;
-    if (!element) return;
+    // Nothing said yet: the welcome screen reads from the top, so there's no bottom to follow.
+    if (!element || feed.length === 0) return;
     if (stickToBottomRef.current) {
       scrollFeedToBottom();
       setHasNewFeed(false);
@@ -482,25 +496,6 @@ export default function App() {
     });
   };
 
-  // Same as togglePersona, but used on the welcome screen where there's no roster
-  // panel to show a refusal, so an attempt to unseat the last mind flashes a note instead.
-  const flipWelcomeSeat = (name: string) => {
-    if (selectedPersonas.includes(name) && selectedPersonas.length === 1) {
-      setRefusedWelcomeSeat(name);
-      return;
-    }
-    togglePersona(name);
-  };
-
-  useEffect(() => {
-    if (!refusedWelcomeSeat) return;
-    const timer = window.setTimeout(() => setRefusedWelcomeSeat(null), 4000);
-    return () => window.clearTimeout(timer);
-  }, [refusedWelcomeSeat]);
-
-  useEffect(() => {
-    if (selectedPersonas.length > 1) setRefusedWelcomeSeat(null);
-  }, [selectedPersonas]);
 
   const handleSignInWithGitHub = async () => {
     if (!supabase) {
@@ -772,7 +767,7 @@ export default function App() {
     }
   };
 
-  const handleLaunch = async (titleHint?: string): Promise<Session | null> => {
+  const handleLaunch = async (titleHint?: string, modeOverride?: string): Promise<Session | null> => {
     if (isLaunching) return null;
 
     if (requiresAuth && (isAuthInitializing || !accessToken)) {
@@ -781,6 +776,7 @@ export default function App() {
     }
 
     const resolvedTitle = sessionTitle.trim() || titleHint?.trim() || "Untitled Council";
+    const launchMode = modeOverride ?? mode;
     setIsLaunching(true);
     setStatusMessage("");
 
@@ -796,7 +792,7 @@ export default function App() {
       const response = await createSession(
         {
           title: resolvedTitle,
-          mode
+          mode: launchMode
         },
         accessToken
       );
@@ -808,7 +804,7 @@ export default function App() {
         setStatusMessage("Couldn't open the room. The API or Supabase isn't responding.");
         return null;
       }
-      const localSession = makeLocalSession(mode, resolvedTitle);
+      const localSession = makeLocalSession(launchMode, resolvedTitle);
       setStartedState(
         localSession,
         "API unreachable. Running as a local draft for now."
@@ -854,9 +850,18 @@ export default function App() {
     }
   };
 
-  const handleExport = async (format: "md" | "pdf") => {
-    if (!session) {
-      setExportStatus("Launch a session to export.");
+  // Takes the minutes of any saved council, not only the open one: it's offered from each row's menu.
+  // A finished export message steps aside after a few seconds; one in progress stays.
+  useEffect(() => {
+    if (isExporting || !exportStatus) return;
+    const timer = window.setTimeout(() => setExportStatus(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [exportStatus, isExporting]);
+
+  const handleExport = async (format: "md" | "pdf", target: Session) => {
+    if (isExporting) return;
+    if (target.id.startsWith("local-")) {
+      setExportStatus("This council is a local draft, so there are no saved minutes to export yet.");
       return;
     }
 
@@ -866,10 +871,10 @@ export default function App() {
     }
 
     setIsExporting(true);
-    setExportStatus(`Generating ${format.toUpperCase()} export...`);
 
     try {
-      const response = await generateExport(session.id, format, accessToken);
+      setExportStatus(`Taking the minutes of ${target.title ?? "this council"} as ${format === "md" ? "Markdown" : "PDF"}...`);
+      const response = await generateExport(target.id, format, accessToken);
       if (response.downloadUrl) {
         window.open(response.downloadUrl, "_blank");
         setExportStatus("Export ready. Download opened.");
@@ -887,7 +892,7 @@ export default function App() {
         setExportStatus("Export generated, but no download payload.");
       }
     } catch (error) {
-      setExportStatus("Export failed. Check API + storage.");
+      setExportStatus("Couldn't take the minutes: the export service didn't respond. Try again in a moment.");
     } finally {
       setIsExporting(false);
     }
@@ -895,6 +900,9 @@ export default function App() {
 
   const getStreamFailureMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : "";
+    if (import.meta.env.PROD && message.includes("API base resolution failed")) {
+      return "The council can't reach the server right now. Try again in a moment.";
+    }
     if (message.includes("API base resolution failed")) {
       return `${message} From repo root, run "npm run dev", then open ${CONFIGURED_API_URL}/health and confirm status=ok in your browser.`;
     }
@@ -903,6 +911,9 @@ export default function App() {
       message.includes("NetworkError") ||
       message.includes("Load failed")
     ) {
+      if (import.meta.env.PROD) {
+        return "The council can't reach the server right now. Try again in a moment.";
+      }
       return `API server is unreachable. From repo root, run "npm run dev", then open ${CONFIGURED_API_URL}/health and confirm it returns status=ok.`;
     }
     if (message.includes("openai_not_configured")) {
@@ -920,8 +931,15 @@ export default function App() {
     if (message.includes("openai_rate_limited")) {
       return "Provider rate limit hit. Wait or use a different model/key.";
     }
+    if (message.includes("rate_limited")) {
+      // The API's own limit (30 LLM calls a minute per visitor by default).
+      return "The council needs a breather: too many questions in the last minute. Try again shortly.";
+    }
     if (message.includes("invalid_request")) {
       return "The stream request was invalid. Check persona, mode, and prompt length.";
+    }
+    if (import.meta.env.PROD) {
+      return "This mind couldn't answer just now. Try again in a moment.";
     }
     return `Streaming failed. ${message || "Check API and LLM provider config."}`;
   };
@@ -934,7 +952,8 @@ export default function App() {
         item.id === responseId
           ? {
               ...item,
-              content: failureMessage
+              content: failureMessage,
+              failed: true
             }
           : item
       )
@@ -971,23 +990,35 @@ export default function App() {
   };
 
   const handleSend = async () => {
-    const trimmed = prompt.trim();
+    if (isSending) return;
+    const roundMode = parsed.command?.mode ?? mode;
+    // A leading /command sets the pressure; the rest of the message is what gets sent.
+    const trimmed = parsed.message;
     if (!trimmed) {
+      if (parsed.command) {
+        setMode(parsed.command.mode);
+        setPrompt("");
+        promptRef.current?.focus();
+        return;
+      }
       setStatusMessage("Type what you want the council to look at.");
       promptRef.current?.focus();
       return;
     }
-
-    if (isSending) return;
 
     if (askTargets.length === 0) {
       setStatusMessage("Pick at least one mind to answer.");
       return;
     }
 
+    if (requiresAuth && !accessToken) {
+      setStatusMessage(isAuthInitializing ? "Checking sign-in state. Try again in a moment." : "Sign in to continue.");
+      return;
+    }
+
     let activeSession = session;
     if (!activeSession) {
-      activeSession = await handleLaunch(PLACEHOLDER_TITLE);
+      activeSession = await handleLaunch(PLACEHOLDER_TITLE, roundMode);
       if (!activeSession) return;
       const token: NamingToken = { id: activeSession.id, title: null };
       namingRef.current = token;
@@ -1011,7 +1042,7 @@ export default function App() {
         const response = await createSession(
           {
             title: naming?.title ?? activeSession.title ?? PLACEHOLDER_TITLE,
-            mode: activeSession.mode ?? mode
+            mode: activeSession.mode ?? roundMode
           },
           effectiveToken
         );
@@ -1055,7 +1086,7 @@ export default function App() {
     }
 
     const history = feed
-      .filter((item) => item.content.trim())
+      .filter((item) => !item.failed && item.content.trim())
       .slice(-12)
       .map((item) => ({
         speaker:
@@ -1064,6 +1095,14 @@ export default function App() {
             : "User",
         content: item.content
       }));
+
+    // The round is going ahead: only now apply the /command pressure and seat
+    // any benched mind called by name, so a refused send changes nothing.
+    if (parsed.command) setMode(parsed.command.mode);
+    const benchedMentions = targets.filter((name) => !selectedPersonas.includes(name));
+    if (benchedMentions.length > 0) {
+      setSelectedPersonas((prev) => personaNames.filter((name) => prev.includes(name) || benchedMentions.includes(name)));
+    }
 
     setFeed((prev) => [
       ...prev,
@@ -1089,7 +1128,7 @@ export default function App() {
       };
       const streamGuest = () =>
         streamGuestPersonaResponse(
-          { persona, prompt: trimmed, mode, history: history.slice(-20), followUp },
+          { persona, prompt: trimmed, mode: roundMode, history: history.slice(-20), followUp },
           { onToken: appendToken }
         );
 
@@ -1105,7 +1144,7 @@ export default function App() {
       try {
         await streamPersonaResponse(
           activeSession.id,
-          { persona, prompt: trimmed, mode, followUp },
+          { persona, prompt: trimmed, mode: roundMode, followUp },
           effectiveToken,
           { onToken: appendToken }
         );
@@ -1143,6 +1182,8 @@ export default function App() {
       setSpeakingNow(null);
       setRoundQueue([]);
       setIsSending(false);
+      // The saved list now has this round's turns; refresh so every slot shows current counts and speakers.
+      if (useCloudStreaming) void refreshSessions(effectiveToken);
     }
   };
 
@@ -1162,6 +1203,42 @@ export default function App() {
     applyTitle(id, title);
   };
 
+  // Deletes a council for good. Returns an error message to show, or null when it's gone.
+  const handleDeleteSession = async (target: Session): Promise<string | null> => {
+    const isOpen = target.id === session?.id;
+    if (isOpen && (isSending || isLaunching)) {
+      return "The council is still answering. Delete it once this round finishes.";
+    }
+    if (requiresAuth && !accessToken) {
+      return "Sign in to delete councils.";
+    }
+    if (!target.id.startsWith("local-")) {
+      try {
+        await deleteSession(target.id, accessToken);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        // Already gone on the server: treat it as deleted and tidy the list.
+        if (!message.includes("(404)")) {
+          return "Couldn't delete this council: the server didn't confirm it. Nothing was removed, so try again.";
+        }
+      }
+    }
+    titleOverridesRef.current.delete(target.id);
+    if (namingRef.current?.id === target.id) namingRef.current = null;
+    setSessions((prev) => prev.filter((item) => item.id !== target.id));
+    if (isOpen) {
+      // The open council is gone: land on a fresh one instead of a transcript that no longer exists.
+      setSession(null);
+      setFeed([]);
+      setPrompt("");
+      setArtifactFile(null);
+      setArtifactStatus("");
+      setStatusMessage("");
+      setIsCouncilOpen(false);
+    }
+    return null;
+  };
+
   const startNewCouncil = () => {
     if (isSending) return;
     namingRef.current = null;
@@ -1179,27 +1256,28 @@ export default function App() {
   };
 
   const lastFeedId = feed[feed.length - 1]?.id;
-  const starters = STARTER_PROMPTS[mode] ?? STARTER_PROMPTS.Brainstorm;
+  // The open council's save-slot numbers, straight from its transcript.
+  const liveSummary = useMemo(() => {
+    // An empty feed is a transcript still loading (or a brand-new council): keep the server's numbers.
+    if (!session || feed.length === 0) return null;
+    // A failed stream shows its error in the feed but was never saved, so it isn't a turn.
+    const replies = feed.filter((item) => item.speaker !== "User" && !item.failed && item.content.trim());
+    const speakers: string[] = [];
+    for (const item of replies) if (!speakers.includes(item.speaker)) speakers.push(item.speaker);
+    return { id: session.id, turnCount: replies.length, speakers };
+  }, [session, feed]);
+  // One starter per pressure level, coolest first; picking one also sets that pressure.
+  const starters = PRESSURE.map((stop) => ({
+    mode: stop.mode,
+    text: (STARTER_PROMPTS[stop.mode] ?? STARTER_PROMPTS.Brainstorm)[0]
+  }));
   const isFreshRoom = !session && feed.length === 0;
-  const askLabel =
-    askTargets.length === 0
-      ? "Pick who answers"
-      : askEveryone
-        ? "Ask everyone"
-        : askTargets.length === 1
-          ? `Ask ${askTargets[0]}`
-          : `Ask ${askTargets.length}`;
   const visibleNotice = !isSending && statusMessage ? statusMessage : "";
 
-  const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      void handleSend();
-    }
-  };
-
-  const applyStarter = (text: string) => {
-    setPrompt(text);
+  // A starter carries its pressure as a /command, which also shows people the shortcut exists.
+  const applyStarter = (text: string, starterMode: string) => {
+    const command = commandForMode(starterMode);
+    setPrompt(command ? `/${command.word} ${text}` : text);
     promptRef.current?.focus();
   };
 
@@ -1215,164 +1293,80 @@ export default function App() {
 
   const personaState = (name: string) => {
     if (speakingNow === name) return "Speaking";
-    if (!selectedPersonas.includes(name)) return "Not seated";
+    if (!selectedPersonas.includes(name)) return "Benched";
     if (isSending) return roundQueue.includes(name) ? "Up next" : "Listening";
     if (askTargets.includes(name)) return "Answers next";
     return "Listening";
   };
 
+  const benchPersona = (name: string) => {
+    if (selectedPersonas.includes(name)) togglePersona(name);
+  };
+
+  const seatPersona = (name: string) => {
+    if (!selectedPersonas.includes(name)) togglePersona(name);
+  };
+
   const renderComposer = () => (
-    <div className="composer" style={personaStyle(askTargets.length === 1 ? askTargets[0] : "")}>
-      <div className="speaker-row" role="group" aria-label="Who answers">
-        <button
-          type="button"
-          className="speaker-chip speaker-chip-all"
-          aria-pressed={askEveryone}
-          onClick={() => setAskList(selectedPersonas.slice())}
-          disabled={selectedPersonas.length < 2}
-          title="Every seated mind answers in turn and can react to the others"
-        >
-          Everyone
-        </button>
-        {selectedPersonas.map((name) => (
+    <Composer
+      personas={personas}
+      seated={selectedPersonas}
+      targets={askTargets}
+      mentionsLead={mentionsLead}
+      askEveryone={askEveryone}
+      speakingNow={speakingNow}
+      onAskEveryone={() => setAskList(selectedPersonas.slice())}
+      onToggleAsk={toggleAsk}
+      onBench={benchPersona}
+      onSeat={seatPersona}
+      prompt={prompt}
+      parsed={parsed}
+      onPromptChange={setPrompt}
+      promptRef={promptRef}
+      onSend={() => void handleSend()}
+      isSending={isSending}
+      isLaunching={isLaunching}
+      isFresh={isFreshRoom}
+      canAttach={Boolean(session)}
+      attachLabel={artifactFileState?.name ?? ""}
+      attachStatus={artifactStatus}
+      onAttach={(file) => {
+        setArtifactFile(file);
+        void handleUpload(file);
+      }}
+      onDismissAttach={() => {
+        setArtifactFile(null);
+        setArtifactStatus("");
+      }}
+    />
+  );
+
+  const renderStarters = () => (
+    <div className="starter-grid">
+      {starters.map(({ mode: starterMode, text }) => {
+        const stop = pressureFor(starterMode);
+        return (
           <button
-            key={name}
+            key={text}
             type="button"
-            className="speaker-chip"
-            style={personaStyle(name)}
-            aria-pressed={askTargets.includes(name)}
-            data-speaking={speakingNow === name}
-            onClick={() => toggleAsk(name)}
-            title={askTargets.includes(name) ? `${name} will answer. Tap to leave them out.` : `Tap to have ${name} answer`}
+            className="starter"
+            style={{ "--heat": stop.heat } as CSSProperties}
+            onClick={() => applyStarter(text, starterMode)}
+            title={`Starts at ${stop.name} (${stop.mode})`}
           >
-            <span className="chip-face" aria-hidden="true">
-              <PixelAvatar name={name} compact talking={speakingNow === name} />
+            <span className="starter-head" aria-hidden="true">
+              <HeatBars level={stop.level} />
+              <code>/{commandForMode(starterMode)?.word}</code>
             </span>
-            {name}
+            <span>{text}</span>
           </button>
-        ))}
-        {!askEveryone && askTargets.length > 1 && (
-          <span className="speaker-note">{askTargets.length} answer in turn</span>
-        )}
-      </div>
-
-      {(artifactFileState || artifactStatus) && (
-        <div className="attach-status" role="status" aria-live="polite">
-          <span>{artifactStatus || artifactFileState?.name}</span>
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => {
-              setArtifactFile(null);
-              setArtifactStatus("");
-            }}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <div className="composer-box">
-        <label
-          className="attach-button"
-          data-disabled={!session}
-          title={session ? "Attach a PDF, TXT or MD file (up to 5 MB)" : "Send your first message, then attach files"}
-        >
-          <input
-            type="file"
-            className="sr-only"
-            accept=".pdf,.txt,.md"
-            disabled={!session}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (!file) return;
-              setArtifactFile(file);
-              void handleUpload(file);
-            }}
-          />
-          <svg viewBox="0 0 12 14" width="16" height="19" shapeRendering="crispEdges" aria-hidden="true">
-            <path d="M1 0h7v1H1zM0 1h1v13H0zM1 13h10v1H1zM11 4h1v10h-1zM8 1h1v3h3v1H8zM9 2h1v1H9zM3 6h6v1H3zM3 8h6v1H3zM3 10h4v1H3z" fill="currentColor" />
-          </svg>
-          <span className="sr-only">Attach a file</span>
-        </label>
-        <label className="sr-only" htmlFor="council-prompt">
-          Your message
-        </label>
-        <textarea
-          id="council-prompt"
-          ref={promptRef}
-          rows={1}
-          className="composer-input"
-          placeholder={
-            isFreshRoom
-              ? "Describe your idea..."
-              : askEveryone
-                ? "Ask the whole council..."
-                : askTargets.length === 1
-                  ? `Reply to ${askTargets[0]}...`
-                  : askTargets.length === 0
-                    ? "Pick who answers above..."
-                    : `Ask ${askTargets.join(", ").replace(/, ([^,]*)$/, " and $1")}...`
-          }
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={handlePromptKeyDown}
-        />
-        <button
-          type="button"
-          className="send-button"
-          onClick={() => void handleSend()}
-          disabled={isSending || isLaunching || !prompt.trim() || askTargets.length === 0}
-          aria-label={isSending ? "Council is answering" : askLabel}
-        >
-          <span className="send-label">{isLaunching ? "Opening..." : isSending ? "Listening..." : askLabel}</span>
-          <span className="send-icon" aria-hidden="true">
-            ▶
-          </span>
-        </button>
-      </div>
+        );
+      })}
     </div>
   );
 
   const renderWelcome = () => (
     <section className="welcome" aria-labelledby="welcome-title">
-      <div className="party" role="group" aria-label="Seat the council">
-        {personas.map((persona) => {
-          const seated = selectedPersonas.includes(persona.name);
-          const locked = seated && selectedPersonas.length === 1;
-          return (
-            <button
-              key={persona.name}
-              type="button"
-              className="party-seat"
-              style={personaStyle(persona.name)}
-              aria-pressed={seated}
-              aria-describedby={locked ? "party-hint" : undefined}
-              data-refused={refusedWelcomeSeat === persona.name}
-              onClick={() => flipWelcomeSeat(persona.name)}
-              title={
-                locked
-                  ? `${persona.name} is the last one in. Seat someone else first.`
-                  : `${persona.name}, ${PERSONA_META[persona.name]?.archetype ?? persona.role}. ${seated ? "Click to unseat." : "Click to seat."}`
-              }
-            >
-              <PixelAvatar name={persona.name} compact />
-              <span>{persona.name}</span>
-            </button>
-          );
-        })}
-      </div>
-      <p className="party-hint" id="party-hint" data-alert={Boolean(refusedWelcomeSeat)} role="status" aria-live="polite">
-        {refusedWelcomeSeat
-          ? `Someone has to stay in the room. Seat another mind before unseating ${refusedWelcomeSeat}.`
-          : selectedPersonas.length === personas.length
-            ? "The full council is seated. Tap a face to send someone out."
-            : selectedPersonas.length === 1
-              ? `${selectedPersonas[0]} is the last one in, so they can't be unseated yet.`
-              : `${selectedPersonas.length} of ${personas.length} seated. Tap a face to change who's in the room.`}
-      </p>
-
       <h1 className="welcome-title" id="welcome-title">
         What should the council look at?
       </h1>
@@ -1382,14 +1376,7 @@ export default function App() {
       </div>
 
       {renderComposer()}
-
-      <div className="starter-grid">
-        {starters.map((text) => (
-          <button key={text} type="button" className="starter" onClick={() => applyStarter(text)}>
-            {text}
-          </button>
-        ))}
-      </div>
+      {renderStarters()}
     </section>
   );
 
@@ -1410,10 +1397,6 @@ export default function App() {
       mode={mode}
       modeControl={<PressureControl variant="panel" mode={mode} onChange={setMode} />}
       stateOf={personaState}
-      canExport={Boolean(session)}
-      onExport={(format) => void handleExport(format)}
-      isExporting={isExporting}
-      exportStatus={exportStatus}
       rosterOffline={personaStatus === "error"}
       isOpen={isCouncilOpen}
       onClose={() => setIsCouncilOpen(false)}
@@ -1464,18 +1447,11 @@ export default function App() {
           {!isFreshRoom && feed.length === 0 && (
             <div className="empty-feed">
               <p>The floor is open. Ask something with real stakes, or start from one of these:</p>
-              <div className="starter-grid">
-                {starters.map((text) => (
-                  <button key={text} type="button" className="starter" onClick={() => applyStarter(text)}>
-                    {text}
-                  </button>
-                ))}
-              </div>
+              {renderStarters()}
             </div>
           )}
           {feed.map((entry) => {
             const isUser = entry.speaker === "User";
-            const streaming = isSending && entry.id === lastFeedId;
             if (isUser) {
               return (
                 <article key={entry.id} className="turn turn-user">
@@ -1483,25 +1459,25 @@ export default function App() {
                 </article>
               );
             }
+            const streaming = isSending && entry.id === lastFeedId;
             return (
               <article
                 key={entry.id}
-                className="turn"
+                className="dlg"
                 style={personaStyle(entry.speaker)}
                 data-streaming={streaming}
+                aria-label={`${entry.speaker}, ${entry.time}`}
               >
-                <span className="turn-face" aria-hidden="true">
+                <header className="dlg-plate">
+                  <strong>{entry.speaker}</strong>
+                  <time>{entry.time}</time>
+                </header>
+                <span className="dlg-face" aria-hidden="true">
                   <PixelAvatar name={entry.speaker} compact talking={streaming && speakingNow === entry.speaker} />
                 </span>
-                <div className="turn-body">
-                  <header>
-                    <strong>{entry.speaker}</strong>
-                    <time>{entry.time}</time>
-                  </header>
-                  <p>
-                    {entry.content ? normalizePersonaText(entry.content) : <span className="thinking">thinking</span>}
-                  </p>
-                </div>
+                <p className="dlg-text">
+                  {entry.content ? normalizePersonaText(entry.content) : <span className="thinking">thinking</span>}
+                </p>
               </article>
             );
           })}
@@ -1715,6 +1691,11 @@ export default function App() {
         collapsed={sidebarCollapsed}
         requiresAuth={requiresAuth}
         identity={authIdentity}
+        liveSummary={liveSummary}
+        onExport={(target, format) => void handleExport(format, target)}
+        onDelete={handleDeleteSession}
+        isExporting={isExporting}
+        exportStatus={exportStatus}
         onClose={() => setIsDrawerOpen(false)}
         onToggleCollapsed={toggleSidebarCollapsed}
         onHome={() => {

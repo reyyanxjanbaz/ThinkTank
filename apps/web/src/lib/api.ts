@@ -10,8 +10,10 @@ type Artifact = {
   createdAt: string;
 };
 
+// Production talks only to VITE_API_URL (empty = same origin). The localhost fallbacks
+// below exist for local development and are never probed in a production build.
 const configuredApiUrl = (
-  import.meta.env.VITE_API_URL ?? "http://localhost:3001"
+  import.meta.env.VITE_API_URL?.trim() || (import.meta.env.PROD ? "" : "http://localhost:3001")
 ).replace(/\/$/, "");
 
 let resolvedApiBase: string | null = null;
@@ -35,6 +37,10 @@ const toErrorMessage = (error: unknown) =>
 const formatApiBase = (apiBase: string) => apiBase || "same-origin";
 
 const getApiUrls = () => {
+  if (import.meta.env.PROD) {
+    return [configuredApiUrl];
+  }
+
   const urls = ["", configuredApiUrl, ...LOOPBACK_API_URLS];
 
   if (typeof window !== "undefined") {
@@ -144,8 +150,10 @@ const request = async <T>(
   options?: RequestInit,
   accessToken?: string
 ): Promise<T> => {
+  // Only declare JSON when there is a body: Fastify rejects an empty body
+  // sent as application/json (DELETE has none).
   const headers = {
-    "Content-Type": "application/json",
+    ...(options?.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...(options?.headers ?? {})
   } as Record<string, string>;
 
@@ -207,6 +215,14 @@ export const renameSession = (sessionId: string, title: string, accessToken?: st
   request<{ session: Session }>(
     `/api/sessions/${sessionId}`,
     { method: "PATCH", body: JSON.stringify({ title }) },
+    accessToken
+  );
+
+/** Deletes a council for good: its transcript, uploads and minutes go with it. */
+export const deleteSession = (sessionId: string, accessToken?: string) =>
+  request<{ deleted: boolean; id: string }>(
+    `/api/sessions/${sessionId}`,
+    { method: "DELETE" },
     accessToken
   );
 

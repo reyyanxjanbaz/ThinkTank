@@ -9,6 +9,14 @@ export type Session = {
   updatedAt: string;
 };
 
+/** A session as the council list shows it: how much was said, and by whom. */
+export type SessionSummary = Session & {
+  /** Persona replies so far (your own messages are not counted). */
+  turnCount: number;
+  /** Personas who have replied, in the order they first spoke. */
+  speakers: string[];
+};
+
 export type Turn = {
   id: string;
   sessionId: string;
@@ -79,10 +87,12 @@ export type AddExportInput = {
 };
 
 export type Store = {
-  listSessions: (userId?: string) => Promise<Session[]>;
+  listSessions: (userId?: string) => Promise<SessionSummary[]>;
   getSession: (id: string, userId?: string) => Promise<Session | null>;
   createSession: (input: CreateSessionInput) => Promise<Session>;
   updateSessionTitle: (id: string, title: string, userId?: string) => Promise<Session | null>;
+  /** Deletes a session and (by cascade) its turns, artifacts and export records. False if it wasn't found. */
+  deleteSession: (id: string, userId?: string) => Promise<boolean>;
   listTurns: (sessionId: string) => Promise<Turn[]>;
   addTurn: (input: AddTurnInput) => Promise<Turn>;
   listArtifacts: (sessionId: string) => Promise<Artifact[]>;

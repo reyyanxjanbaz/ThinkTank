@@ -1,0 +1,286 @@
+/*
+  Installed-app comfort: notch and home-indicator insets, keyboard-aware height, no rubber-band,
+  no accidental selection on chrome, touch-sized targets. Loaded last so it can refine the
+  layout rules without rewriting them. Every env() is 0 in a normal browser tab.
+*/
+
+html,
+body {
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+label,
+summary,
+input,
+select,
+textarea,
+[role="button"],
+[role="option"],
+[role="menuitem"] {
+  touch-action: manipulation;
+}
+
+/* Chrome is tapped, not read: no text selection or long-press callout on it. Messages stay selectable. */
+button,
+summary,
+label,
+.seat-chip,
+.speaker-row,
+.suggest,
+.sb-menu,
+.council-faces,
+.menu-button,
+.pwa-status,
+[role="button"],
+[role="menuitem"],
+[role="option"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The shell ends where the visual viewport ends (above the iOS keyboard); --app-h comes from lib/pwa.ts. */
+.app-shell {
+  height: var(--app-h, 100dvh);
+}
+
+.room-bar {
+  padding-top: calc(8px + env(safe-area-inset-top));
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right));
+}
+
+.dock {
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right));
+}
+
+/* With the keyboard up, the home indicator is hidden behind it; don't pad for it. */
+:root[data-keyboard="open"] .dock {
+  padding-bottom: 10px;
+}
+
+.sidebar {
+  padding-top: calc(16px + env(safe-area-inset-top));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  padding-left: max(12px, env(safe-area-inset-left));
+}
+
+.council {
+  padding-top: calc(16px + env(safe-area-inset-top));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+
+.home-nav {
+  padding-top: calc(18px + env(safe-area-inset-top));
+}
+
+.gate-shell {
+  padding-top: calc(32px + env(safe-area-inset-top));
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+
+/* Popovers never run under the notch or the home indicator. */
+.sb-menu {
+  max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  .home-nav {
+    padding-top: calc(14px + env(safe-area-inset-top));
+  }
+}
+
+/* ---------- Touch: 44px targets, 16px inputs (iOS zooms on anything smaller) ---------- */
+
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .icon-button,
+  .attach-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .send-button,
+  .ghost-button,
+  .composer-input,
+  .sb-menu-item,
+  .sb-menu-format {
+    min-height: 44px;
+  }
+
+  .send-button {
+    min-width: 44px;
+  }
+
+  .seat-chip-ask,
+  .seat-chip-bench,
+  .seat-chip-add,
+  .speaker-chip,
+  .sb-brand,
+  .sb-state-button {
+    min-height: 44px;
+  }
+
+  /* 44px tall; the × and the gaps tighten a little so all five minds still fit two rows at 390px. */
+  .seat-chip-bench {
+    width: 30px;
+  }
+
+  .speaker-row {
+    gap: 4px;
+  }
+
+  .seat-chip-ask {
+    padding-right: 4px;
+  }
+
+  .sb-icon,
+  .sb-action {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Always visible on touch, so the row ⋯ stays a quiet glyph: the 44px is hit area, not a filled block. */
+  .sb-more {
+    background: transparent;
+    color: var(--ink-3);
+  }
+
+  .sb-more[aria-expanded="true"] {
+    background: var(--edge);
+    color: var(--ink);
+  }
+}
+
+/* ---------- Connection notes (PwaStatus.tsx) ---------- */
+
+/* Bottom-centre by default (clear of every top bar); in the room it hangs just under the room bar,
+   since the composer owns the bottom edge there. */
+.pwa-status {
+  position: fixed;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 80;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.pwa-chip,
+.pwa-toast {
+  pointer-events: auto;
+  border: 2px solid var(--frame);
+  border-radius: 8px;
+  background: var(--window);
+  box-shadow: 0 0 0 2px var(--edge), inset 0 0 0 2px var(--edge), 0 10px 24px rgba(3, 4, 20, 0.55);
+  animation: pwa-drop 160ms steps(4, end);
+}
+
+.pwa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px 4px;
+  font-family: var(--font-pixel);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.pwa-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--alert);
+  animation: blink 1.2s steps(1, end) infinite;
+}
+
+body:has(.room-bar) .pwa-status {
+  top: calc(68px + env(safe-area-inset-top));
+  bottom: auto;
+}
+
+/* In the room, the composer already says why Send is off; one message is enough. */
+body:has(.composer) .pwa-chip {
+  display: none;
+}
+
+.pwa-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 14px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.pwa-toast-reload {
+  min-height: 34px;
+  border: 2px solid var(--edge);
+  border-radius: 6px;
+  background: var(--frame);
+  padding: 2px 14px;
+  color: var(--edge);
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  line-height: 1;
+  box-shadow: inset 0 -3px 0 rgba(7, 8, 42, 0.28);
+}
+
+.pwa-toast-reload:hover {
+  filter: brightness(1.08);
+}
+
+.pwa-toast-close {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-3);
+}
+
+.pwa-toast-close:hover {
+  background: var(--edge);
+  color: var(--ink);
+}
+
+@media (pointer: coarse) {
+  .pwa-toast-reload,
+  .pwa-toast-close {
+    min-height: 44px;
+  }
+
+  .pwa-toast-close {
+    width: 44px;
+  }
+}
+
+.hint-offline {
+  color: var(--alert);
+}
+
+@keyframes pwa-drop {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}

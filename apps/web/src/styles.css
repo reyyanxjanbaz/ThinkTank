@@ -331,8 +331,14 @@ ul {
 
 .room[data-fresh="true"] .feed-inner {
   display: flex;
+  flex-direction: column;
   min-height: 100%;
-  align-items: center;
+}
+
+/* Auto margins centre the welcome when it fits and top-align it when it doesn't,
+   so nothing can be pushed above the top of the scroll area on a short phone screen. */
+.room[data-fresh="true"] .welcome {
+  margin-block: auto;
 }
 
 /* Fresh room: one centered start, the composer is part of it. */
@@ -349,63 +355,7 @@ ul {
   min-width: 0;
 }
 
-.party {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-}
-
-.party-seat {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--ink-3);
-  font-family: var(--font-pixel);
-  font-size: 21px;
-  line-height: 1;
-}
-
-.party-seat .avatar-shell {
-  width: 68px;
-  height: 68px;
-  border: 2px solid var(--line);
-  filter: grayscale(1) brightness(0.65);
-  transition: transform 120ms steps(2, end);
-}
-
-.party-seat:hover .avatar-shell {
-  transform: translateY(-3px);
-}
-
-.party-seat[aria-pressed="true"] {
-  color: var(--persona);
-}
-
-.party-seat[aria-pressed="true"] .avatar-shell {
-  border-color: var(--persona);
-  filter: none;
-}
-
-.party-hint {
-  margin-top: 12px;
-  color: var(--ink-3);
-  font-size: 14px;
-}
-
-.party-hint[data-alert="true"] {
-  color: var(--ink);
-}
-
-/* The last mind on the welcome screen can't be unseated. */
-.party-seat[data-refused="true"] {
-  animation: roster-nope 280ms steps(4, end);
-}
-
 .welcome-title {
-  margin-top: 28px;
   font-family: var(--font-pixel);
   font-size: clamp(40px, 5vw, 60px);
   font-weight: 400;
@@ -430,10 +380,13 @@ ul {
 }
 
 .starter {
+  display: grid;
+  align-content: start;
+  gap: 4px;
   border: 2px solid var(--line);
   border-radius: 8px;
   background: transparent;
-  padding: 10px 12px;
+  padding: 9px 12px 10px;
   color: var(--ink-2);
   font-size: 14px;
   line-height: 1.45;
@@ -441,9 +394,29 @@ ul {
 }
 
 .starter:hover {
-  border-color: var(--line-strong);
+  border-color: color-mix(in srgb, var(--heat, var(--line-strong)) 60%, var(--line));
   background: var(--surface);
   color: var(--ink);
+}
+
+.starter-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.starter-head .heat-bars {
+  height: 12px;
+}
+
+.starter-head .heat-bars i {
+  width: 3px;
+}
+
+.starter-head code {
+  color: var(--heat, var(--ink-3));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .empty-feed p {
@@ -518,6 +491,83 @@ ul {
   animation: dots 1.2s steps(4, end) infinite;
 }
 
+/* Dialogue windows: every reply in the same SNES window, with its portrait and a nameplate. */
+.dlg {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  border: 2px solid var(--frame);
+  border-radius: 8px;
+  background: var(--window);
+  box-shadow: 0 0 0 2px var(--edge), inset 0 0 0 2px var(--edge);
+  padding: 20px 16px 14px;
+}
+
+.feed-inner > .dlg {
+  margin-top: 30px;
+}
+
+.feed-inner > .dlg:first-child {
+  margin-top: 14px;
+}
+
+.dlg-plate {
+  position: absolute;
+  top: -15px;
+  left: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 2px solid var(--persona);
+  border-radius: 4px;
+  background: var(--edge);
+  padding: 3px 8px 2px;
+}
+
+.dlg-plate strong {
+  color: var(--persona);
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.dlg-plate time {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.dlg-face .avatar-shell {
+  width: 44px;
+  height: 44px;
+  border: 2px solid var(--persona);
+}
+
+.dlg-text {
+  max-width: 68ch;
+  font-size: 16.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dlg[data-streaming="true"] .dlg-text::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: var(--persona);
+  animation: blink 0.8s steps(1, end) infinite;
+}
+
+.feed-inner > .turn-user:not(:first-child) {
+  margin-top: 30px;
+}
+
 .turn-user {
   display: flex;
   justify-content: flex-end;
@@ -584,17 +634,109 @@ ul {
   padding: 8px;
 }
 
+/* Named chips wrap instead of scrolling, so all five minds are always visible, even at 390px. */
 .speaker-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  overflow-x: auto;
   padding: 2px 2px 8px;
   border-bottom: 2px solid var(--edge);
-  scrollbar-width: none;
 }
 
-.speaker-row::-webkit-scrollbar {
+.seat-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
+  min-height: 34px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: var(--edge);
+  color: var(--ink-2);
+}
+
+.seat-chip[data-asked="true"] {
+  border-color: var(--persona);
+  background: color-mix(in srgb, var(--persona) 24%, var(--edge));
+  color: var(--ink);
+}
+
+.seat-chip[data-refused="true"] {
+  animation: roster-nope 280ms steps(4, end);
+}
+
+.seat-chip-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px 0 0 4px;
+  background: none;
+  padding: 2px 6px 2px 3px;
+  color: inherit;
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  line-height: 1;
+}
+
+.seat-chip-ask:hover {
+  color: var(--ink);
+}
+
+.seat-chip-bench {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--persona) 22%, var(--edge));
+  border-radius: 0 4px 4px 0;
+  background: none;
+  color: var(--ink-3);
+}
+
+.seat-chip-bench:hover {
+  background: color-mix(in srgb, var(--persona) 30%, var(--edge));
+  color: var(--ink);
+}
+
+.seat-chip-bench[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.seat-chip-bench[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--ink-3);
+}
+
+.seat-chip-add {
+  flex: none;
+  min-height: 34px;
+  border: 2px dashed var(--line-strong);
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 10px;
+  color: var(--ink-3);
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  line-height: 1;
+}
+
+.seat-chip-add:hover {
+  border-color: var(--persona);
+  color: var(--persona);
+}
+
+.seat-note {
+  margin-top: 8px;
+  border-left: 2px solid var(--frame);
+  padding-left: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.seat-note:empty {
   display: none;
 }
 
@@ -634,7 +776,13 @@ ul {
   opacity: 0.4;
 }
 
+.chip-face {
+  display: block;
+  flex: none;
+}
+
 .chip-face .avatar-shell {
+  display: block;
   width: 24px;
   height: 24px;
   border-radius: 4px;
@@ -654,10 +802,191 @@ ul {
 }
 
 .composer-box {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 6px;
   padding-top: 8px;
+}
+
+/* The textarea's own text is transparent; the mirror underneath draws the same text with tokens coloured.
+   Both share every metric that affects wrapping, so the caret and the colours stay aligned. */
+.composer-field {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.composer-mirror,
+.composer-field .composer-input {
+  grid-area: 1 / 1;
+  min-height: 40px;
+  max-height: 220px;
+  margin: 0;
+  border: 0;
+  padding: 8px 4px;
+  font-family: var(--font-read);
+  font-size: 16px;
+  letter-spacing: normal;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.composer-mirror {
+  overflow: hidden;
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.composer-field .composer-input {
+  position: relative;
+  color: transparent;
+  caret-color: var(--ink);
+  scrollbar-width: none;
+}
+
+.composer-field .composer-input::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-field .composer-input::selection {
+  background: rgba(236, 234, 255, 0.3);
+  color: transparent;
+}
+
+.tok {
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+}
+
+.tok-mention {
+  background: color-mix(in srgb, var(--persona) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--persona) 60%, transparent);
+  color: var(--persona);
+}
+
+.tok-command {
+  background: color-mix(in srgb, var(--heat) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--heat) 60%, transparent);
+  color: var(--heat);
+}
+
+.suggest {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 40px;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  width: min(340px, calc(100% - 40px));
+  margin: 0;
+  border: 2px solid var(--frame);
+  border-radius: 8px;
+  background: var(--rail);
+  box-shadow: 0 0 0 2px var(--edge), 0 14px 30px rgba(3, 4, 20, 0.55);
+  padding: 4px;
+  list-style: none;
+  animation: pop-in 120ms steps(3, end);
+}
+
+.suggest-item {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.suggest-item[aria-selected="true"] {
+  background: var(--surface-hover);
+}
+
+.suggest-item strong {
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.suggest-item[data-kind="mention"] strong {
+  color: var(--persona);
+}
+
+.suggest-item[data-kind="command"] strong {
+  color: var(--heat);
+}
+
+.suggest-item[data-kind="mention"][aria-selected="true"] {
+  box-shadow: inset 3px 0 0 var(--persona);
+}
+
+.suggest-item[data-kind="command"][aria-selected="true"] {
+  box-shadow: inset 3px 0 0 var(--heat);
+}
+
+.suggest-item span {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-item .chip-face {
+  display: block;
+  flex: none;
+}
+
+.chip-face .avatar-shell {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+}
+
+.composer-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  padding: 0 4px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.composer-hints:empty {
+  display: none;
+}
+
+.hint-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+}
+
+.hint-token .heat-bars {
+  height: 12px;
+}
+
+.hint-token .heat-bars i {
+  width: 3px;
+}
+
+.composer-hints kbd,
+.pressure-tip kbd {
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 0 4px;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
 }
 
 .attach-button {
@@ -698,7 +1027,6 @@ ul {
   line-height: 1.5;
   resize: none;
   outline: none;
-  scrollbar-width: thin;
 }
 
 .composer-input::placeholder {
@@ -1034,176 +1362,16 @@ ul {
   display: none;
 }
 
-/* Roster strip: one switch per mind, right under the table. */
-
-.roster {
-  display: grid;
-  gap: 8px;
-  margin-top: -6px;
-}
-
-.roster-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.roster-head span {
-  color: var(--ink-3);
-  font-size: 12px;
-}
-
-.roster-strip {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.roster-switch {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  min-height: 60px;
-  border: 2px solid var(--persona);
-  border-radius: 6px;
-  background: var(--surface);
-  padding: 6px 2px 7px;
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.roster-switch:hover {
-  background: color-mix(in srgb, var(--persona) 16%, var(--surface));
-}
-
-.roster-switch:focus-visible {
-  outline: 2px solid var(--frame);
-  outline-offset: 2px;
-}
-
-.roster-name {
-  color: var(--persona);
-  font-family: var(--font-pixel);
-  font-size: 19px;
-  line-height: 0.9;
-}
-
-.roster-track {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 42px;
-  height: 20px;
-  border: 2px solid var(--persona);
-  border-radius: 3px;
-  background: var(--edge);
-  padding: 0 4px;
-}
-
-.roster-knob {
-  position: absolute;
-  top: 2px;
-  left: 22px;
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--persona);
-  transition: left 120ms steps(2, end);
-}
-
-.roster-word {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* Benched: dashed frame, knob slides left, the word reads "Out". */
-.roster-switch[data-seated="false"] {
-  border-style: dashed;
-  border-color: var(--line-strong);
-  background: var(--rail);
-}
-
-/* Hovering a benched mind previews their colour: "they'd sit here". */
-.roster-switch[data-seated="false"]:hover {
-  border-color: var(--persona);
-  background: var(--surface);
-}
-
-.roster-switch[data-seated="false"]:hover .roster-name {
-  color: var(--persona);
-}
-
-.roster-switch[data-seated="false"] .roster-name {
-  color: var(--ink-3);
-}
-
-.roster-switch[data-seated="false"] .roster-track {
-  justify-content: flex-end;
-  border-color: var(--line-strong);
-  background: transparent;
-}
-
-.roster-switch[data-seated="false"] .roster-knob {
-  left: 2px;
-  background: var(--line-strong);
-}
-
-.roster-switch[data-seated="false"] .roster-word {
-  color: var(--ink-3);
-}
-
-/* The last mind in the room can't be benched. */
-.roster-switch[data-locked="true"] {
-  cursor: not-allowed;
-}
-
-.roster-switch[data-locked="true"]:hover {
-  background: var(--surface);
-}
-
-.roster-switch[data-locked="true"] .roster-track {
-  border-style: dotted;
-}
-
-.roster-switch[data-refused="true"] {
-  animation: roster-nope 280ms steps(4, end);
-}
-
-.roster-note {
-  border-left: 2px solid var(--line-strong);
-  padding-left: 8px;
-  color: var(--ink-2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.roster-note:empty {
-  display: none;
-}
-
-.roster-note[data-alert="true"] {
-  border-left-color: var(--frame);
-  color: var(--ink);
-}
-
 @keyframes roster-nope {
   0%, 100% { transform: none; }
   25% { transform: translateX(-3px); }
   75% { transform: translateX(3px); }
 }
 
-/* Share of voice. */
+/* Share of voice: each segment is a button; hover, focus or tap shows that mind's numbers. */
 
-.voice,
-.minutes {
+.voice {
+  position: relative;
   display: grid;
   gap: 8px;
 }
@@ -1223,7 +1391,7 @@ ul {
 .voice-bar {
   display: flex;
   gap: 2px;
-  height: 12px;
+  height: 14px;
 }
 
 .voice-bar-empty {
@@ -1233,8 +1401,12 @@ ul {
 
 .voice-seg {
   flex-basis: 0;
-  min-width: 4px;
+  min-width: 6px;
+  border: 0;
+  padding: 0;
   background: var(--persona);
+  cursor: pointer;
+  transition: transform 90ms steps(2, end);
 }
 
 .voice-seg:first-child {
@@ -1245,20 +1417,87 @@ ul {
   border-radius: 0 3px 3px 0;
 }
 
+.voice-seg:hover,
+.voice-seg[data-shown="true"] {
+  transform: scaleY(1.45);
+}
+
+.voice-seg:focus-visible {
+  outline: 2px solid var(--frame);
+  outline-offset: 3px;
+}
+
 .voice-seg[data-live="true"] {
   animation: voice-live 0.9s steps(1, end) infinite;
 }
 
-/* Character sheet for the picked seat. */
+/* The numbers that used to live on the sheet: turns, words and share of the voice. */
+.voice-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: clamp(0px, calc(var(--at) - 96px), calc(100% - 192px));
+  z-index: 6;
+  width: 192px;
+  border: 2px solid var(--frame);
+  border-top: 4px solid var(--persona);
+  border-radius: 6px;
+  background: var(--rail);
+  box-shadow: 0 0 0 2px var(--edge), 0 12px 28px rgba(3, 4, 20, 0.55);
+  padding: 7px 8px 8px;
+  animation: pop-in 120ms steps(3, end);
+  pointer-events: none;
+}
+
+.voice-card strong {
+  color: var(--persona);
+  font-family: var(--font-pixel);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.voice-card dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+.voice-card dl div {
+  display: flex;
+  flex-direction: column-reverse;
+  border-radius: 4px;
+  background: var(--edge);
+  padding: 4px 6px;
+}
+
+.voice-card dt {
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.voice-card dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-pixel);
+  font-size: 24px;
+  line-height: 0.9;
+}
+
+/* Character sheet, compact: name and archetype on one line, the state on the top edge,
+   the last line folded to two lines, then the two actions. */
 
 .sheet {
+  position: relative;
   display: grid;
-  gap: 12px;
+  gap: 6px;
+  margin-top: 4px;
   border: 2px solid var(--line);
   border-top: 4px solid var(--persona);
   border-radius: 8px;
   background: var(--surface);
-  padding: 12px;
+  padding: 9px 10px 8px;
   animation: sheet-in 200ms steps(2, end) both;
 }
 
@@ -1266,38 +1505,17 @@ ul {
   border-top-color: var(--line-strong);
 }
 
-.sheet-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 2px 8px;
-}
-
-.sheet-head p {
-  grid-column: 1 / -1;
-}
-
-.sheet .sheet-head h3 {
-  color: var(--persona);
-  font-family: var(--font-pixel);
-  font-size: 30px;
-  font-weight: 400;
-  line-height: 0.9;
-}
-
-.sheet-head p {
-  color: var(--ink-2);
-  font-size: 13px;
-}
-
 .sheet-state {
-  flex: none;
+  position: absolute;
+  top: -11px;
+  right: 10px;
   border: 2px solid var(--line-strong);
   border-radius: 4px;
-  padding: 1px 6px;
+  background: var(--rail);
+  padding: 0 6px;
   color: var(--ink-2);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .sheet-state[data-speaking="true"] {
@@ -1305,42 +1523,44 @@ ul {
   color: var(--persona);
 }
 
-.sheet-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.sheet-stats div {
+.sheet-head {
   display: flex;
-  flex-direction: column-reverse;
-  border-radius: 5px;
-  background: var(--rail);
-  padding: 6px 8px;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
-.sheet-stats dt {
-  color: var(--ink-3);
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-.sheet-stats dd {
-  color: var(--ink);
+.sheet .sheet-head h3 {
+  flex: none;
+  color: var(--persona);
   font-family: var(--font-pixel);
-  font-size: 28px;
+  font-size: 26px;
+  font-weight: 400;
   line-height: 0.9;
 }
 
-.sheet-line {
-  display: grid;
-  gap: 4px;
-  margin: 0;
+.sheet-head p {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sheet-line figcaption {
-  color: var(--ink-3);
-  font-size: 12px;
+.sheet-line {
+  position: relative;
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+  text-align: left;
+}
+
+.sheet-line:disabled {
+  cursor: default;
 }
 
 .sheet-line blockquote {
@@ -1348,32 +1568,60 @@ ul {
   overflow: hidden;
   margin: 0;
   border-left: 2px solid var(--persona);
-  padding-left: 10px;
-  color: var(--ink);
+  padding-left: 8px;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 2;
+}
+
+.sheet-line[data-open="true"] blockquote {
+  display: block;
+}
+
+.sheet-line blockquote em {
+  margin-right: 2px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .sheet-line[data-empty="true"] blockquote {
   border-left-style: dashed;
   color: var(--ink-2);
-  font-style: italic;
+}
+
+.sheet-more {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, var(--surface) 35%);
+  padding-left: 22px;
+  color: var(--persona);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.sheet-line:hover .sheet-more {
+  text-decoration: underline;
 }
 
 .sheet-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sheet-ask,
 .sheet-seat {
-  min-height: 36px;
+  min-height: 30px;
   border-radius: 6px;
-  padding: 2px 12px;
+  padding: 2px 10px;
   font-family: var(--font-pixel);
-  font-size: 20px;
+  font-size: 19px;
   line-height: 1;
 }
 
@@ -1426,6 +1674,19 @@ ul {
   display: none;
 }
 
+.sheet-note {
+  border-left: 2px solid var(--frame);
+  padding-left: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* A refused bench wobbles while the note explains why. */
+.sheet:has(.sheet-note) .sheet-seat {
+  animation: roster-nope 280ms steps(4, end);
+}
+
 /* Mode slot (the control itself is shared with the rest of the app). */
 
 .council-mode {
@@ -1434,25 +1695,6 @@ ul {
 }
 
 .council-mode p {
-  color: var(--ink-2);
-  font-size: 13px;
-}
-
-
-
-/* Export. */
-
-.minutes {
-  border-top: 2px solid var(--line);
-  padding-top: 14px;
-}
-
-.minutes-row {
-  display: flex;
-  gap: 8px;
-}
-
-.minutes p {
   color: var(--ink-2);
   font-size: 13px;
 }
@@ -2318,21 +2560,29 @@ ul {
     padding-bottom: 24px;
   }
 
-  .party {
-    gap: 8px;
+  .dlg {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    padding: 18px 12px 12px;
   }
 
-  .party-seat {
-    font-size: 18px;
+  .dlg-face .avatar-shell {
+    width: 34px;
+    height: 34px;
   }
 
-  .party-seat .avatar-shell {
-    width: 54px;
-    height: 54px;
+  .dlg-text {
+    font-size: 16px;
   }
 
-  .welcome-title {
-    margin-top: 22px;
+  .seat-chip-ask,
+  .seat-chip-add {
+    font-size: 19px;
+  }
+
+  .welcome-pressure {
+    margin: 18px auto 16px;
+    padding: 14px;
   }
 
 
@@ -2396,10 +2646,3 @@ ul {
   justify-content: center;
 }
 
-.speaker-note {
-  flex: none;
-  padding-left: 6px;
-  color: var(--ink-3);
-  font-size: 12px;
-  white-space: nowrap;
-}

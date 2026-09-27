@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Session } from "./lib/types";
-import { FALLBACK_PERSONAS } from "./lib/council";
+import { FALLBACK_PERSONAS, PERSONA_COLORS } from "./lib/council";
 import { LogoMark } from "./Logo";
 import { HeatBars, pressureFor } from "./Pressure";
 import { PersonaSprite } from "./sprites";
@@ -17,6 +17,14 @@ type SidebarProps = {
   collapsed: boolean;
   requiresAuth: boolean;
   identity: string;
+  /** The open council's counts, taken from its live transcript so the slot updates as replies land. */
+  liveSummary: { id: string; turnCount: number; speakers: string[] } | null;
+  /** Takes the minutes of a council (any saved one, not only the open one). */
+  onExport: (session: Session, format: "md" | "pdf") => void;
+  isExporting: boolean;
+  exportStatus: string;
+  /** Deletes a council for good; resolves to an error message, or null once it's gone. */
+  onDelete: (session: Session) => Promise<string | null>;
   onClose: () => void;
   onToggleCollapsed: () => void;
   onHome: () => void;
@@ -87,8 +95,15 @@ const activeTime = (session: Session) => {
 // Simple one-tone 10x10 pixel icons; state is shown by colour, not by extra detail.
 const ICONS = {
   pin: "M2 1h6v1h-6zM3 2h4v1h-4zM3 3h4v1h-4zM1 4h8v1h-8zM4 5h2v1h-2zM4 6h2v1h-2zM4 7h2v1h-2zM4 8h1v1h-1z",
-  pencil: "M7 1h2v1h-2zM6 2h3v1h-3zM5 3h3v1h-3zM4 4h3v1h-3zM3 5h3v1h-3zM2 6h3v1h-3zM2 7h2v1h-2zM1 8h1v1h-1z"
+  pencil: "M7 1h2v1h-2zM6 2h3v1h-3zM5 3h3v1h-3zM4 4h3v1h-3zM3 5h3v1h-3zM2 6h3v1h-3zM2 7h2v1h-2zM1 8h1v1h-1z",
+  more: "M1 4h2v2h-2zM4 4h2v2h-2zM7 4h2v2h-2z",
+  trash: "M3 0h4v1h-4zM0 1h10v1h-10zM1 2h1v8h-1zM8 2h1v8h-1zM2 9h6v1h-6zM3 3h1v5h-1zM6 3h1v5h-1z",
+  scroll: "M2 1h6v1h-6zM1 2h1v1h-1zM8 2h1v6h-1zM2 2h1v7h-1zM3 8h6v1h-6zM4 3h3v1h-3zM4 5h3v1h-3zM4 7h2v1h-2z"
 } as const;
+
+/** Where a row menu opens: under its trigger, or anchored by its bottom edge when there's no room below. */
+type MenuState = { id: string; left: number; top?: number; bottom?: number } | null;
+const MENU_W = 220;
 
 function PixelIcon({ name }: { name: keyof typeof ICONS }) {
   return (
@@ -108,6 +123,11 @@ export default function Sidebar(props: SidebarProps) {
     collapsed,
     requiresAuth,
     identity,
+    liveSummary,
+    onExport,
+    isExporting,
+    exportStatus,
+    onDelete,
     onClose,
     onToggleCollapsed,
     onHome,
@@ -128,6 +148,13 @@ export default function Sidebar(props: SidebarProps) {
   const asideRef = useRef<HTMLElement | null>(null);
   const newRef = useRef<HTMLButtonElement | null>(null);
   const committingRef = useRef(false);
+  // One row menu at a time, drawn in a fixed layer so the scrolling list can't clip it.
+  const [menu, setMenu] = useState<MenuState>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Delete asks once, inside the menu, before anything is removed.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const now = new Date();
 
   useEffect(() => {
@@ -245,11 +272,259 @@ export default function Sidebar(props: SidebarProps) {
   const current = sessions.find((item) => item.id === currentId) ?? null;
   const resultCount = groups.reduce((total, group) => total + group.items.length, 0);
 
+  const openMenu = (session: Session, trigger: HTMLButtonElement) => {
+    if (menu?.id === session.id) {
+      setMenu(null);
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    // Room for the menu below the trigger? Otherwise open upwards.
+    const up = window.innerHeight - rect.bottom < 250;
+    const left = Math.max(8, Math.min(rect.right - MENU_W, window.innerWidth - MENU_W - 8));
+    menuTriggerRef.current = trigger;
+    setMenu(
+      up
+        ? { id: session.id, left, bottom: window.innerHeight - rect.top + 6 }
+        : { id: session.id, left, top: rect.bottom + 6 }
+    );
+  };
+
+  const closeMenu = (restoreFocus = false) => {
+    // Focus the trigger while its row is still showing it; focus-within then keeps it visible.
+    if (restoreFocus) menuTriggerRef.current?.focus();
+    setMenu(null);
+  };
+
+  useEffect(() => {
+    setConfirmingDelete(false);
+  }, [menu?.id]);
+
+  // The confirmation opens on the safe choice; backing out returns to Delete.
+  const confirmSeen = useRef(false);
+  useEffect(() => {
+    if (!menu) return;
+    if (confirmingDelete) confirmSeen.current = true;
+    else if (!confirmSeen.current) return;
+    window.requestAnimationFrame(() =>
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>(confirmingDelete ? ".sb-confirm-cancel" : ".sb-menu-danger")
+        ?.focus()
+    );
+    if (!confirmingDelete) confirmSeen.current = false;
+  }, [confirmingDelete]);
+
+  useEffect(() => {
+    if (!menu) return;
+    window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus());
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target)) return;
+      setMenu(null);
+    };
+    const onMove = () => setMenu(null);
+    // Escape closes the menu wherever focus is, even in the moment before it lands on the first item.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      menuTriggerRef.current?.focus();
+      setMenu(null);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("resize", onMove);
+    const scroller = asideRef.current?.querySelector(".sb-scroll");
+    scroller?.addEventListener("scroll", onMove);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", onMove);
+      scroller?.removeEventListener("scroll", onMove);
+    };
+  }, [menu?.id]);
+
+  const onMenuKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not(:disabled)") ?? []);
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      // Escape here closes only the menu, not the drawer behind it.
+      event.nativeEvent.stopPropagation();
+      closeMenu(true);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      items[(index + step + items.length) % items.length]?.focus();
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+    }
+  };
+
+  const confirmDelete = async (session: Session) => {
+    setDeleting(true);
+    const error = await onDelete(session);
+    setDeleting(false);
+    if (error) {
+      setNotice(error);
+      closeMenu(true);
+      return;
+    }
+    setPins((prev) => {
+      if (!prev.includes(session.id)) return prev;
+      const next = prev.filter((item) => item !== session.id);
+      writePins(pinKey, next);
+      return next;
+    });
+    setMenu(null);
+    setNotice(`Deleted “${session.title ?? "Untitled council"}”.`);
+    window.requestAnimationFrame(() => newRef.current?.focus());
+  };
+
+  const renderMenu = () => {
+    if (!menu) return null;
+    const session = sessions.find((item) => item.id === menu.id);
+    if (!session) return null;
+    const title = session.title ?? "Untitled council";
+    const isPinned = pins.includes(session.id);
+    const isDraft = session.id.startsWith("local-");
+    const exportTitle = isDraft ? "Local drafts have no saved minutes yet" : undefined;
+    const act = (fn: () => void) => () => {
+      closeMenu(true);
+      fn();
+    };
+    if (confirmingDelete) {
+      return (
+        <div
+          ref={menuRef}
+          className="sb-menu sb-menu-confirm"
+          role="alertdialog"
+          aria-labelledby="sb-delete-title"
+          aria-describedby="sb-delete-copy"
+          style={{ top: menu.top, bottom: menu.bottom, left: menu.left, width: MENU_W }}
+          onKeyDown={onMenuKey}
+        >
+          <p className="sb-confirm-title" id="sb-delete-title">
+            Delete “{title}”?
+          </p>
+          <p className="sb-confirm-copy" id="sb-delete-copy">
+            The transcript, its uploads and its minutes are removed for good. This can't be undone.
+          </p>
+          <div className="sb-confirm-actions">
+            <button
+              type="button"
+              role="menuitem"
+              className="sb-confirm-cancel"
+              disabled={deleting}
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Keep it
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="sb-confirm-delete"
+              disabled={deleting}
+              onClick={() => void confirmDelete(session)}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        ref={menuRef}
+        className="sb-menu"
+        role="menu"
+        aria-label={`Actions for ${title}`}
+        style={{ top: menu.top, bottom: menu.bottom, left: menu.left, width: MENU_W }}
+        onKeyDown={onMenuKey}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          className="sb-menu-item"
+          onClick={act(() => {
+            togglePin(session.id);
+            // The row moves between groups and remounts; put focus back on its menu button.
+            window.requestAnimationFrame(() =>
+              asideRef.current?.querySelector<HTMLButtonElement>(`.sb-row[data-id="${session.id}"] .sb-more`)?.focus()
+            );
+          })}
+        >
+          <PixelIcon name="pin" />
+          {isPinned ? "Unpin" : "Pin to top"}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="sb-menu-item"
+          onClick={() => {
+            // Focus goes to the rename field, not back to the trigger.
+            setMenu(null);
+            startRename(session);
+          }}
+        >
+          <PixelIcon name="pencil" />
+          Rename
+        </button>
+        <div className="sb-menu-group" role="group" aria-label="Take the minutes">
+          <p className="sb-menu-label" aria-hidden="true">
+            <PixelIcon name="scroll" />
+            Take the minutes
+          </p>
+          <div className="sb-menu-formats">
+            <button
+              type="button"
+              role="menuitem"
+              className="sb-menu-format"
+              disabled={isDraft || isExporting}
+              title={exportTitle}
+              aria-label={`Take the minutes as Markdown`}
+              onClick={act(() => onExport(session, "md"))}
+            >
+              Markdown
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="sb-menu-format"
+              disabled={isDraft || isExporting}
+              title={exportTitle}
+              aria-label={`Take the minutes as PDF`}
+              onClick={act(() => onExport(session, "pdf"))}
+            >
+              PDF
+            </button>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="menuitem"
+          className="sb-menu-item sb-menu-danger"
+          disabled={busy && session.id === currentId}
+          title={busy && session.id === currentId ? "Available once the council finishes answering" : undefined}
+          onClick={() => setConfirmingDelete(true)}
+        >
+          <PixelIcon name="trash" />
+          Delete
+        </button>
+      </div>
+    );
+  };
+
   const renderRow = (session: Session) => {
     const stop = pressureFor(session.mode ?? "Brainstorm");
     const isCurrent = session.id === currentId;
     const isPinned = pins.includes(session.id);
     const title = session.title ?? "Untitled council";
+    const live = liveSummary && liveSummary.id === session.id ? liveSummary : null;
+    const turnCount = live?.turnCount ?? session.turnCount;
+    const speakers = live?.speakers ?? session.speakers ?? [];
+    const turnsLabel =
+      turnCount === undefined ? "" : turnCount === 0 ? "No turns yet" : turnCount === 1 ? "1 turn" : `${turnCount} turns`;
 
     if (editingId === session.id) {
       return (
@@ -273,39 +548,52 @@ export default function Sidebar(props: SidebarProps) {
     }
 
     return (
-      <li key={session.id} className="sb-row" data-current={isCurrent}>
+      <li key={session.id} className="sb-row" data-current={isCurrent} data-id={session.id}>
+        {/* A save slot: title, then pressure and turns, then a mark for each mind that spoke. */}
         <button
           type="button"
-          className="sb-open"
+          className="sb-open sb-slot"
           aria-current={isCurrent ? "page" : undefined}
           onClick={() => openCouncil(session)}
           title={`${title}, ${stop.mode}`}
         >
-          <HeatBars level={stop.level} className="sb-heat" />
-          <span className="sb-title">{title}</span>
-          <time className="sb-time" dateTime={lastActive(session)}>
-            {relativeTime(lastActive(session), now)}
-          </time>
+          <span className="sb-slot-top">
+            <span className="sb-title">{title}</span>
+            <time className="sb-time" dateTime={lastActive(session)}>
+              {relativeTime(lastActive(session), now)}
+            </time>
+          </span>
+          <span className="sb-meta">
+            <HeatBars level={stop.level} className="sb-heat" />
+            <span>{stop.name}</span>
+            {turnsLabel && (
+              <>
+                {" "}
+                <span aria-hidden="true">·</span> <span>{turnsLabel}</span>
+              </>
+            )}
+            {/* One small mark per mind that spoke, on the same line so the slot stays two lines tall. */}
+            {speakers.length > 0 && (
+              <span className="sb-dots" title={`Spoke: ${speakers.join(", ")}`}>
+                {speakers.map((name) => (
+                  <i key={name} style={{ background: PERSONA_COLORS[name] ?? "var(--frame)" }} />
+                ))}
+                <span className="sr-only">. Spoke: {speakers.join(", ")}</span>
+              </span>
+            )}
+          </span>
         </button>
-        <span className="sb-actions">
+        <span className="sb-actions" data-open={menu?.id === session.id}>
           <button
             type="button"
-            className="sb-action"
-            aria-pressed={isPinned}
-            aria-label={isPinned ? `Unpin ${title}` : `Pin ${title}`}
-            title={isPinned ? "Unpin" : "Pin to top"}
-            onClick={() => togglePin(session.id)}
+            className="sb-action sb-more"
+            aria-haspopup="menu"
+            aria-expanded={menu?.id === session.id}
+            aria-label={`More for ${title}${isPinned ? ", pinned" : ""}`}
+            title="Pin, rename, take the minutes, delete"
+            onClick={(event) => openMenu(session, event.currentTarget)}
           >
-            <PixelIcon name="pin" />
-          </button>
-          <button
-            type="button"
-            className="sb-action"
-            aria-label={`Rename ${title}`}
-            title="Rename"
-            onClick={() => startRename(session)}
-          >
-            <PixelIcon name="pencil" />
+            <PixelIcon name="more" />
           </button>
         </span>
       </li>
@@ -467,6 +755,11 @@ export default function Sidebar(props: SidebarProps) {
               {notice}
             </p>
           )}
+          {exportStatus && (
+            <p className="sb-notice" data-busy={isExporting} role="status" aria-live="polite">
+              {exportStatus}
+            </p>
+          )}
           <nav className="sb-list" aria-label="Past councils">
             {renderBody()}
           </nav>
@@ -490,6 +783,7 @@ export default function Sidebar(props: SidebarProps) {
           )}
         </div>
       </aside>
+      {renderMenu()}
       {isOpen && <button type="button" className="scrim scrim-left" aria-label="Close menu" onClick={onClose} />}
     </>
   );

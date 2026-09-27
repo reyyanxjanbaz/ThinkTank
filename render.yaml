@@ -1,0 +1,48 @@
+# Render Blueprint for the Think Tank API (a long-running Node server that streams SSE).
+# The web app deploys separately to Vercel from apps/web (see DEPLOY.md).
+services:
+  - type: web
+    name: thinktank-api
+    runtime: node
+    rootDir: apps/api
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20.18.0"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: LOG_LEVEL
+        value: info
+      - key: ALLOW_MEMORY_STORE
+        value: "false"
+      - key: PROMPT_PREVIEW
+        value: "false"
+      - key: RATE_LIMIT_MAX
+        value: "30"
+      - key: SUPABASE_STORAGE_BUCKET
+        value: artifacts
+      - key: SUPABASE_EXPORT_BUCKET
+        value: exports
+      - key: MAX_ARTIFACT_SIZE
+        value: "5242880"
+      - key: OPENROUTER_APP_NAME
+        value: Think Tank
+      # Secrets and deployment-specific values: set these in the Render dashboard.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: OPENROUTER_SITE_URL
+        sync: false

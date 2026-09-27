@@ -12,6 +12,10 @@ export type Session = {
   status: "active" | "archived";
   createdAt: string;
   updatedAt: string;
+  /** Persona replies so far. Sent by the council list; missing on local drafts. */
+  turnCount?: number;
+  /** Personas who have replied, in the order they first spoke. */
+  speakers?: string[];
 };
 
 export type Turn = {

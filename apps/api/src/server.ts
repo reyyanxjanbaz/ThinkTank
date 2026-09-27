@@ -1,7 +1,8 @@
-import "./lib/env.js";
-import Fastify from "fastify";
+import { isProduction } from "./lib/env.js";
+import Fastify, { type FastifyReply } from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { PERSONA_NAMES, getPublicPersonas } from "./prompts/personas.js";
 import {
@@ -30,30 +31,77 @@ import * as memoryStore from "./store/memoryStore.js";
 import * as supabaseStore from "./store/supabaseStore.js";
 import type { Store } from "./store/types.js";
 
-const app = Fastify({ logger: true });
+// Behind a hosting proxy (Render, Fly, Railway) the client IP arrives in X-Forwarded-For;
+// rate limiting keys on it, so trust the proxy only when told to.
+const parseTrustProxy = () => {
+  const value = (process.env.TRUST_PROXY ?? "").trim().toLowerCase();
+  if (value === "true") return true;
+  const hops = Number.parseInt(value, 10);
+  return Number.isFinite(hops) && hops > 0 ? hops : false;
+};
 
-const isProduction = process.env.NODE_ENV === "production";
+const app = Fastify({
+  logger: { level: process.env.LOG_LEVEL?.trim() || "info" },
+  // JSON bodies are small (prompts cap at a few thousand characters); uploads use multipart limits below.
+  bodyLimit: 1024 * 1024,
+  trustProxy: parseTrustProxy()
+});
+
+// Treat an empty application/json body as "no body" instead of a 400, so
+// body-less requests (DELETE) work even when a client sends the header.
+// Everything else goes through Fastify's own parser, which rejects __proto__
+// and constructor.prototype keys.
+const defaultJsonParser = app.getDefaultJsonParser("error", "error");
+app.removeContentTypeParser("application/json");
+app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+  if (typeof body === "string" && body.trim() === "") {
+    done(null, undefined);
+    return;
+  }
+  defaultJsonParser(request, body as string, done);
+});
+
 const allowMemoryStoreByDefault = isProduction ? "false" : "true";
 const allowMemoryStore =
   (process.env.ALLOW_MEMORY_STORE ?? allowMemoryStoreByDefault).toLowerCase() ===
   "true";
 
+// Development allows any origin when CORS_ORIGIN is empty; production requires an explicit
+// list (checked in lib/env.ts), so it never reflects arbitrary origins.
 const parseCorsOrigin = () => {
-  const configured = (process.env.CORS_ORIGIN ?? "").trim();
-  if (!configured) {
-    return true;
-  }
-  const values = configured
+  const values = (process.env.CORS_ORIGIN ?? "")
     .split(",")
-    .map((item) => item.trim())
+    .map((item) => item.trim().replace(/\/$/, ""))
     .filter(Boolean);
   if (values.length === 0) {
-    return true;
+    return !isProduction;
   }
-  return values.length === 1 ? values[0] : values;
+  return values;
 };
 
 await app.register(cors, { origin: parseCorsOrigin() });
+
+// Only the routes that call the LLM opt in (config.rateLimit), so reads stay unthrottled.
+const RATE_LIMIT_MAX = (() => {
+  const parsed = Number.parseInt(process.env.RATE_LIMIT_MAX ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+})();
+await app.register(rateLimit, { global: false });
+const llmRateLimit = { rateLimit: { max: RATE_LIMIT_MAX, timeWindow: "1 minute" } };
+
+// Client errors keep their message; anything unexpected is logged and answered generically,
+// so internal details and stack traces never reach the browser.
+app.setErrorHandler((error, request, reply) => {
+  const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
+  if (statusCode >= 500) {
+    request.log.error({ err: error }, "request failed");
+    return reply.code(statusCode).send({ error: "server_error" });
+  }
+  return reply.code(statusCode).send({
+    error: statusCode === 429 ? "rate_limited" : error.code ?? "bad_request",
+    message: error.message
+  });
+});
 
 const MAX_ARTIFACT_BYTES = (() => {
   const parsed = Number.parseInt(process.env.MAX_ARTIFACT_SIZE ?? "", 10);
@@ -87,7 +135,8 @@ const inferContentType = (kind: "pdf" | "text", filename: string) => {
 
 await app.register(multipart, {
   limits: {
-    fileSize: MAX_ARTIFACT_BYTES
+    fileSize: MAX_ARTIFACT_BYTES,
+    files: 1
   }
 });
 
@@ -221,9 +270,7 @@ const requireUserId = async (request: { headers: { authorization?: string } }, r
 const handleStoreError = (reply: {
   code: (status: number) => { send: (body: Record<string, string>) => void };
 }, error: unknown) => {
-  if (error instanceof Error) {
-    console.error(error.message);
-  }
+  app.log.error({ err: error }, "store request failed");
   reply.code(500).send({ error: "server_error" });
 };
 
@@ -272,6 +319,24 @@ const logStreamError = (error: unknown, message: string) => {
   }
 
   app.log.error({ err: error }, message);
+};
+
+// Hijacking skips Fastify's header pipeline, so copy the headers plugins already set
+// (CORS, rate limit) onto the raw response; without them a cross-origin stream is blocked.
+// no-transform and X-Accel-Buffering stop proxies from compressing or buffering the stream.
+const openEventStream = (reply: FastifyReply) => {
+  const pending = reply.getHeaders();
+  reply.hijack();
+  for (const [name, value] of Object.entries(pending)) {
+    if (value !== undefined) {
+      reply.raw.setHeader(name, value as string | number | string[]);
+    }
+  }
+  reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
+  reply.raw.setHeader("X-Accel-Buffering", "no");
+  reply.raw.setHeader("Connection", "keep-alive");
+  reply.raw.flushHeaders?.();
 };
 
 app.get("/health", async () => ({
@@ -352,7 +417,7 @@ app.post("/api/prompt-preview", async (request, reply) => {
   return { prompt };
 });
 
-app.post("/api/guest/stream", async (request, reply) => {
+app.post("/api/guest/stream", { config: llmRateLimit }, async (request, reply) => {
   if (!hasOpenAIConfig || !openai) {
     return reply.code(503).send({
       error: "openai_not_configured"
@@ -392,12 +457,7 @@ app.post("/api/guest/stream", async (request, reply) => {
   let onClose: (() => void) | null = null;
 
   try {
-    reply.hijack();
-    reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    reply.raw.setHeader("Cache-Control", "no-cache");
-    reply.raw.setHeader("X-Accel-Buffering", "no");
-    reply.raw.setHeader("Connection", "keep-alive");
-    reply.raw.flushHeaders?.();
+    openEventStream(reply);
 
     let closed = false;
     const abortController = new AbortController();
@@ -453,7 +513,7 @@ app.post("/api/guest/stream", async (request, reply) => {
   }
 });
 
-app.post("/api/sessions/:sessionId/stream", async (request, reply) => {
+app.post("/api/sessions/:sessionId/stream", { config: llmRateLimit }, async (request, reply) => {
   if (!hasOpenAIConfig || !openai) {
     return reply.code(503).send({
       error: "openai_not_configured"
@@ -530,12 +590,7 @@ app.post("/api/sessions/:sessionId/stream", async (request, reply) => {
       });
     }
 
-    reply.hijack();
-    reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    reply.raw.setHeader("Cache-Control", "no-cache");
-    reply.raw.setHeader("X-Accel-Buffering", "no");
-    reply.raw.setHeader("Connection", "keep-alive");
-    reply.raw.flushHeaders?.();
+    openEventStream(reply);
 
     let closed = false;
     const abortController = new AbortController();
@@ -729,7 +784,7 @@ app.post("/api/sessions/:sessionId/exports/generate", async (request, reply) => 
 });
 
 // Derives a short topic title from a council's opening message.
-app.post("/api/titles", async (request, reply) => {
+app.post("/api/titles", { config: llmRateLimit }, async (request, reply) => {
   if (!hasOpenAIConfig || !openai) {
     return reply.code(503).send({ error: "openai_not_configured" });
   }
@@ -828,6 +883,56 @@ app.get("/api/sessions", async (request, reply) => {
 
   try {
     return { sessions: await store.listSessions(userId) };
+  } catch (error) {
+    handleStoreError(reply, error);
+  }
+});
+
+// Removes every stored file under the council's folder in a bucket. A bucket that doesn't exist holds nothing.
+const removeSessionFiles = async (bucket: string, userId: string, sessionId: string) => {
+  if (!supabase) return;
+  const folder = `${userId}/${sessionId}`;
+  for (;;) {
+    const { data, error } = await supabase.storage.from(bucket).list(folder, { limit: 100 });
+    if (error) {
+      if (/not found/i.test(error.message)) return;
+      throw new Error(`Couldn't list ${bucket} files: ${error.message}`);
+    }
+    if (!data || data.length === 0) return;
+    const { error: removeError } = await supabase.storage
+      .from(bucket)
+      .remove(data.map((file) => `${folder}/${file.name}`));
+    if (removeError) {
+      throw new Error(`Couldn't remove ${bucket} files: ${removeError.message}`);
+    }
+    if (data.length < 100) return;
+  }
+};
+
+app.delete("/api/sessions/:sessionId", async (request, reply) => {
+  const { sessionId } = request.params as { sessionId: string };
+  const userId = await requireUserId(request, reply);
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const session = await store.getSession(sessionId, userId);
+    if (!session) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+
+    // Files first: if storage fails, the council stays so the delete can be retried without orphaning files.
+    if (hasSupabaseConfig && supabase) {
+      await removeSessionFiles(STORAGE_BUCKET, userId, sessionId);
+      await removeSessionFiles(EXPORT_BUCKET, userId, sessionId);
+    }
+
+    const deleted = await store.deleteSession(sessionId, userId);
+    if (!deleted) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+    return { deleted: true, id: sessionId };
   } catch (error) {
     handleStoreError(reply, error);
   }
@@ -1071,12 +1176,6 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
       },
       "Artifact upload failed"
     );
-    if (error instanceof Error) {
-      return reply.code(500).send({
-        error: "upload_failed",
-        message: error.message
-      });
-    }
     return reply.code(500).send({
       error: "upload_failed"
     });
@@ -1156,11 +1255,35 @@ const start = async () => {
       },
       "LLM provider configuration loaded"
     );
-    await app.listen({ port, host: "0.0.0.0" });
+    await app.listen({ port, host: process.env.HOST?.trim() || "0.0.0.0" });
   } catch (error) {
     app.log.error(error);
     process.exit(1);
   }
 };
+
+// Hosts send SIGTERM before replacing an instance: stop taking requests, let in-flight ones
+// finish, and give up after a grace period so a long stream can't block the deploy.
+const SHUTDOWN_GRACE_MS = 10_000;
+let shuttingDown = false;
+const shutdown = (signal: NodeJS.Signals) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info({ signal }, "shutting down");
+  const timer = setTimeout(() => {
+    app.log.warn("graceful shutdown timed out; exiting");
+    process.exit(1);
+  }, SHUTDOWN_GRACE_MS);
+  timer.unref();
+  app
+    .close()
+    .then(() => process.exit(0))
+    .catch((error) => {
+      app.log.error({ err: error }, "error during shutdown");
+      process.exit(1);
+    });
+};
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
 
 start();

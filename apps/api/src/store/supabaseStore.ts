@@ -12,6 +12,7 @@ import type {
   Turn,
   UpdateArtifactInput
 } from "./types.js";
+import { summarizeSession } from "./summary.js";
 
 const ensureClient = () => {
   if (!supabase) {
@@ -90,14 +91,60 @@ const mapExport = (row: {
   createdAt: row.created_at
 });
 
+// When session_summaries is missing (migration not applied yet), skip the RPC
+// for a while, then look again so applying the migration takes effect without a restart.
+const SUMMARIES_RECHECK_MS = 5 * 60 * 1000;
+let summariesRetryAt = 0;
+
+const isMissingFunction = (error: { code?: string; message: string }) =>
+  error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message);
+
 export const listSessions = async (userId?: string) => {
   if (!userId) {
     throw new Error("Missing userId");
   }
   const client = ensureClient();
-  const { data, error } = await client
+  const sessionsQuery = client
     .from("sessions")
     .select("id,title,mode,status,created_at,updated_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  // Light path: the database counts turns and lists speakers (migration 2026092701_session_summaries).
+  if (Date.now() >= summariesRetryAt) {
+    const [sessionsResult, summariesResult] = await Promise.all([
+      sessionsQuery,
+      client.rpc("session_summaries", { p_user_id: userId })
+    ]);
+    if (sessionsResult.error) {
+      throw new Error(sessionsResult.error.message);
+    }
+    if (!summariesResult.error) {
+      const byId = new Map(
+        ((summariesResult.data ?? []) as Array<{ session_id: string; turn_count: number; speakers: string[] | null }>).map(
+          (row) => [row.session_id, row]
+        )
+      );
+      return (sessionsResult.data ?? []).map((row) => {
+        const summary = byId.get(row.id);
+        return { ...mapSession(row), turnCount: summary?.turn_count ?? 0, speakers: summary?.speakers ?? [] };
+      });
+    }
+    if (isMissingFunction(summariesResult.error)) {
+      // Only a missing function backs off; a transient error just falls back for this request.
+      if (summariesRetryAt === 0) {
+        console.warn(
+          `[sessions] session_summaries unavailable (${summariesResult.error.message}); counting from embedded turns instead.`
+        );
+      }
+      summariesRetryAt = Date.now() + SUMMARIES_RECHECK_MS;
+    }
+  }
+
+  // Fallback: embed each session's turns (persona + order only) and count here.
+  const { data, error } = await client
+    .from("sessions")
+    .select("id,title,mode,status,created_at,updated_at,turns(persona,order_index)")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -105,7 +152,32 @@ export const listSessions = async (userId?: string) => {
     throw new Error(error.message);
   }
 
-  return (data ?? []).map(mapSession);
+  return (data ?? []).map(({ turns, ...row }) =>
+    summarizeSession(
+      mapSession(row),
+      (turns ?? []).map((turn) => ({ persona: turn.persona, orderIndex: turn.order_index }))
+    )
+  );
+};
+
+export const deleteSession = async (id: string, userId?: string) => {
+  if (!userId) {
+    throw new Error("Missing userId");
+  }
+  const client = ensureClient();
+  // Turns, artifacts and export rows go with it (on delete cascade).
+  const { data, error } = await client
+    .from("sessions")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).length > 0;
 };
 
 export const getSession = async (id: string, userId?: string) => {

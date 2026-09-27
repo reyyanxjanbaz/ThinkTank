@@ -10,6 +10,7 @@ import type {
   Turn,
   UpdateArtifactInput
 } from "./types.js";
+import { summarizeSession } from "./summary.js";
 
 type StoredSession = Session & { userId?: string };
 
@@ -36,7 +37,14 @@ const touchSession = (sessionId: string) => {
 };
 
 export const listSessions = async (userId?: string) =>
-  sessions.filter((session) => !userId || session.userId === userId).map(stripSession);
+  sessions
+    .filter((session) => !userId || session.userId === userId)
+    .map((session) =>
+      summarizeSession(
+        stripSession(session),
+        turns.filter((turn) => turn.sessionId === session.id)
+      )
+    );
 
 export const getSession = async (id: string, userId?: string) => {
   const session = findSession(id, userId);
@@ -65,6 +73,23 @@ export const updateSessionTitle = async (id: string, title: string, userId?: str
   session.title = title;
   session.updatedAt = now();
   return stripSession(session);
+};
+
+export const deleteSession = async (id: string, userId?: string) => {
+  const session = findSession(id, userId);
+  if (!session) {
+    return false;
+  }
+  const drop = <T extends { sessionId: string }>(list: T[]) => {
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (list[index].sessionId === id) list.splice(index, 1);
+    }
+  };
+  sessions.splice(sessions.indexOf(session), 1);
+  drop(turns);
+  drop(artifacts);
+  drop(exports);
+  return true;
 };
 
 export const listTurns = async (sessionId: string) =>

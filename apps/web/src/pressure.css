@@ -262,6 +262,39 @@
   animation: pop-in 120ms steps(3, end);
 }
 
+/* The popover holds the same dial as the welcome screen, sized to fit. */
+.pressure-popover {
+  width: 380px;
+}
+
+.pressure-popover .gauge {
+  width: 132px;
+}
+
+.pressure-popover .readout-name {
+  font-size: 32px;
+}
+
+.pressure-popover .readout-text p {
+  display: none;
+}
+
+.pressure-popover .pressure-stops-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pressure-tip {
+  margin-top: 12px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.pressure-tip kbd {
+  border-color: color-mix(in srgb, var(--heat) 55%, transparent);
+  color: var(--heat);
+}
+
 /* Room heat strip under the header */
 .pressure-strip {
   position: relative;
@@ -281,10 +314,6 @@
   background: var(--heat);
 }
 
-.pressure-strip[data-level="4"] span {
-  animation: strip-flicker 2.4s steps(1, end) infinite;
-}
-
 @keyframes gauge-rattle {
   0%, 92% { transform: translate(0, 0); }
   94% { transform: translate(1px, 0); }
@@ -296,12 +325,6 @@
   0% { opacity: 0; transform: translateY(0); }
   20% { opacity: 0.9; }
   100% { opacity: 0; transform: translateY(-10px); }
-}
-
-@keyframes strip-flicker {
-  0%, 88%, 100% { opacity: 1; }
-  90% { opacity: 0.55; }
-  94% { opacity: 0.85; }
 }
 
 @keyframes pop-in {
@@ -324,6 +347,11 @@
 
   .pressure-stops-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* On a phone the dial is gauge, name and stops: the description would cost four lines. */
+  .pressure-dial .readout-text p {
+    display: none;
   }
 
   .trigger-name {
