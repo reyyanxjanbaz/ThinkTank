@@ -26,3 +26,5 @@ pnpm-debug.log*
 # Supabase local state
 supabase/.branches/
 supabase/.temp/
+
+.playwright-mcp

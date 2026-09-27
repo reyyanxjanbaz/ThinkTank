@@ -82,6 +82,7 @@ export type Store = {
   listSessions: (userId?: string) => Promise<Session[]>;
   getSession: (id: string, userId?: string) => Promise<Session | null>;
   createSession: (input: CreateSessionInput) => Promise<Session>;
+  updateSessionTitle: (id: string, title: string, userId?: string) => Promise<Session | null>;
   listTurns: (sessionId: string) => Promise<Turn[]>;
   addTurn: (input: AddTurnInput) => Promise<Turn>;
   listArtifacts: (sessionId: string) => Promise<Artifact[]>;

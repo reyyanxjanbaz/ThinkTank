@@ -84,3 +84,18 @@ The product possesses inherent virality because users naturally want to share mo
 The strategic positioning of AI Council must avoid framing the platform as “AI chat with personas.” Instead, it should be positioned as “externalized intelligence as a service,” “a room full of minds on demand,” or “a thinking partner for ambitious people.”
 
 The platform’s emotional promise is not merely productivity. Its promise is that users never have to think alone again.
+
+
+
+That error comes from Supabase, not the app. Supabase's built-in email service only sends a few auth emails per hour per project. Each "Sign up" and "Forgot password" attempt sends one, so repeated tries with the wrong email used up the allowance. A wrong-password login doesn't send email, so it isn't what triggered this.
+
+Your options, fastest first:
+
+1. **Create the account yourself in the Supabase dashboard.** Go to Authentication → Users → Add user, enter the correct email and a password, and tick "Auto confirm user". Then log in normally in the app. This sends no email, so the limit doesn't apply.
+2. **Use "Continue with GitHub"** on the sign-in screen if the GitHub provider is set up in your project. It doesn't send any email.
+3. **Wait it out.** The limit resets on its own, usually within an hour.
+4. **Stop it happening again.**
+   - Turn off "Confirm email" under Authentication → Providers → Email. The app's sign-up flow already expects that setting to be off.
+   - For higher limits, add your own email sender under Authentication → Emails → SMTP settings. You can then raise the email limit under Authentication → Rate Limits.
+
+While you sort it out, the preview on http://localhost:5199 runs with sign-in turned off, so you can keep using the app there. Councils won't be saved to your account in that preview.

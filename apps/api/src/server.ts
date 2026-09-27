@@ -6,6 +6,7 @@ import { z } from "zod";
 import { PERSONA_NAMES, getPublicPersonas } from "./prompts/personas.js";
 import {
   buildContextPrompt,
+  FOLLOW_UP_REQUEST,
   buildPrompt,
   buildSystemPrompt,
   type PromptHistoryItem
@@ -118,7 +119,10 @@ const PromptPreviewSchema = z.object({
 const StreamSchema = z.object({
   persona: PersonaSchema,
   mode: z.string().min(1).max(32).optional(),
-  prompt: z.string().min(1).max(4000)
+  prompt: z.string().min(1).max(4000),
+  // Set when several personas answer the same prompt in a row, so the user
+  // turn is stored once rather than once per persona.
+  followUp: z.boolean().optional()
 });
 
 const GuestStreamSchema = StreamSchema.extend({
@@ -137,6 +141,25 @@ const SessionCreateSchema = z.object({
   title: z.string().min(1).max(80).optional(),
   mode: z.string().min(1).max(32).optional()
 });
+
+const TitleRequestSchema = z.object({
+  prompt: z.string().min(1).max(4000)
+});
+
+const SessionTitleSchema = z.object({
+  title: z.string().trim().min(1).max(80)
+});
+
+// Keep model output to a clean, short label: no quotes, no trailing punctuation.
+const cleanTitle = (raw: string) =>
+  raw
+    .split("\n")[0]
+    .replace(/^(title|topic)\s*:\s*/i, "")
+    .replace(/["'`*_#]/g, "")
+    .replace(/[.!?:;,]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
 
 const TurnCreateSchema = z.object({
   persona: PersonaSchema,
@@ -360,9 +383,10 @@ app.post("/api/guest/stream", async (request, reply) => {
     persona: parsed.data.persona,
     mode: parsed.data.mode
   });
+  // Guest follow-ups send the round's question inside history, so don't restate it.
   const contextPrompt = buildContextPrompt({
     history: history as PromptHistoryItem[],
-    userPrompt: parsed.data.prompt
+    userPrompt: parsed.data.followUp ? FOLLOW_UP_REQUEST : parsed.data.prompt
   });
 
   let onClose: (() => void) | null = null;
@@ -477,6 +501,13 @@ app.post("/api/sessions/:sessionId/stream", async (request, reply) => {
       content: turn.content
     }));
 
+    // A follow-up in an "everyone" round only skips storing the user turn when an
+    // earlier speaker's request actually stored it; otherwise the question would be lost.
+    const lastUserTurn = [...turns].reverse().find((turn) => turn.persona === "User");
+    const userTurnStored = Boolean(
+      parsed.data.followUp && lastUserTurn?.content === parsed.data.prompt
+    );
+
     const artifactTexts = artifacts
       .filter((artifact) => artifact.status === "ready" && artifact.parsedText)
       .map((artifact) => limitText(artifact.parsedText ?? ""))
@@ -489,13 +520,15 @@ app.post("/api/sessions/:sessionId/stream", async (request, reply) => {
     const contextPrompt = buildContextPrompt({
       history,
       artifacts: artifactTexts,
-      userPrompt: parsed.data.prompt
+      userPrompt: userTurnStored ? FOLLOW_UP_REQUEST : parsed.data.prompt
     });
-    await store.addTurn({
-      sessionId,
-      persona: "User",
-      content: parsed.data.prompt
-    });
+    if (!userTurnStored) {
+      await store.addTurn({
+        sessionId,
+        persona: "User",
+        content: parsed.data.prompt
+      });
+    }
 
     reply.hijack();
     reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -690,6 +723,70 @@ app.post("/api/sessions/:sessionId/exports/generate", async (request, reply) => 
       contentBase64: pdfBuffer.toString("base64"),
       filename: `${filenameBase}.pdf`
     };
+  } catch (error) {
+    handleStoreError(reply, error);
+  }
+});
+
+// Derives a short topic title from a council's opening message.
+app.post("/api/titles", async (request, reply) => {
+  if (!hasOpenAIConfig || !openai) {
+    return reply.code(503).send({ error: "openai_not_configured" });
+  }
+
+  const parsed = TitleRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "invalid_request", issues: parsed.error.issues });
+  }
+
+  if (isBlocked(parsed.data.prompt)) {
+    return reply.code(400).send({ error: "blocked_prompt" });
+  }
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: openaiModel,
+      temperature: 0.3,
+      max_tokens: 20,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You name brainstorming sessions. Reply with a 2 to 5 word title in Title Case that names the topic being discussed, not the request itself. No quotes, no emoji, no trailing punctuation. Examples: \"I want to charge $12 a month for my habit tracker, smart?\" -> Habit Tracker Pricing. \"Give me names for a study app that feels like a co-op game\" -> Co-op Study App Names. \"Should I quit my job to build my startup full time?\" -> Going Full Time on the Startup."
+        },
+        { role: "user", content: parsed.data.prompt }
+      ]
+    });
+
+    const title = cleanTitle(completion.choices[0]?.message?.content ?? "");
+    if (!title) {
+      return reply.code(502).send({ error: "empty_title" });
+    }
+    return { title };
+  } catch (error) {
+    logStreamError(error, "title generation failed");
+    return reply.code(502).send({ error: getStreamErrorCode(error) });
+  }
+});
+
+app.patch("/api/sessions/:sessionId", async (request, reply) => {
+  const parsed = SessionTitleSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "invalid_request", issues: parsed.error.issues });
+  }
+
+  const { sessionId } = request.params as { sessionId: string };
+  const userId = await requireUserId(request, reply);
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const session = await store.updateSessionTitle(sessionId, parsed.data.title, userId);
+    if (!session) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+    return { session };
   } catch (error) {
     handleStoreError(reply, error);
   }

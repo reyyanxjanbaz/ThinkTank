@@ -78,6 +78,12 @@ export const buildSystemPrompt = ({
   return parts.join("\n\n");
 };
 
+// Used in place of the user's request when another council member already answered it
+// this round: the request is in the history, so repeating it would read as a new question.
+export const FOLLOW_UP_REQUEST =
+  "The user's latest request is above, and other council members have already responded to it. " +
+  "Give your own take on that request: build on, challenge or add to what they said. Don't repeat their points.";
+
 export const buildContextPrompt = ({
   history,
   artifacts,

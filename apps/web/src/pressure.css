@@ -1,0 +1,358 @@
+/* Pressure: the session mode shown as heat. --heat and --level come from the active stop. */
+
+.pressure {
+  --heat: #6fe3c1;
+  display: grid;
+  gap: 16px;
+}
+
+.pressure-readout {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.gauge {
+  position: relative;
+  flex: none;
+  width: 176px;
+  line-height: 0;
+}
+
+.gauge-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+/* A soft glow pooled under the lit arc, stronger as the pressure rises. */
+.gauge::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: 4%;
+  height: 40%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--heat) 40%, transparent), transparent);
+  opacity: calc(var(--level) * 0.18);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.gauge[data-level="4"] .gauge-svg {
+  animation: gauge-rattle 1.8s steps(1, end) infinite;
+}
+
+.steam {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  display: flex;
+  gap: 10px;
+  transform: translateX(-50%);
+}
+
+.steam i {
+  width: 6px;
+  height: 6px;
+  background: color-mix(in srgb, var(--heat) 60%, #ffffff);
+  opacity: 0;
+  animation: steam-rise 1.5s steps(5, end) infinite;
+}
+
+.steam i:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.steam i:nth-child(3) {
+  animation-delay: 1s;
+}
+
+.readout-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.readout-level {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.readout-name {
+  color: var(--heat);
+  font-family: var(--font-pixel);
+  font-size: 40px;
+  font-weight: 400;
+  line-height: 0.9;
+}
+
+.readout-mode {
+  color: var(--ink);
+  font-family: var(--font-pixel);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.readout-text p {
+  max-width: 44ch;
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Heat bars: four ascending bars, lit up to the level. */
+.heat-bars {
+  display: inline-flex;
+  flex: none;
+  align-items: flex-end;
+  gap: 2px;
+  height: 16px;
+}
+
+.heat-bars i {
+  width: 4px;
+  background: var(--line, #262b6e);
+}
+
+.heat-bars i:nth-child(1) { height: 25%; }
+.heat-bars i:nth-child(2) { height: 50%; }
+.heat-bars i:nth-child(3) { height: 75%; }
+.heat-bars i:nth-child(4) { height: 100%; }
+
+.heat-bars i[data-on="true"] {
+  background: var(--bar-heat);
+}
+
+/* Stops */
+.pressure-stops {
+  display: grid;
+  gap: 6px;
+}
+
+.pressure-stops-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.pressure-stops-grid {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.pressure-stops-grid .pressure-stop {
+  padding: 5px 10px;
+}
+
+.pressure-stops-grid .stop-text {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pressure-stop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border: 2px solid var(--line, #262b6e);
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.pressure-stop:hover {
+  border-color: color-mix(in srgb, var(--heat) 60%, var(--line, #262b6e));
+}
+
+.pressure-stop[aria-checked="true"] {
+  border-color: var(--heat);
+  background: color-mix(in srgb, var(--heat) 16%, transparent);
+}
+
+.stop-text {
+  display: grid;
+  min-width: 0;
+}
+
+.stop-text strong {
+  overflow: hidden;
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  font-weight: 400;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stop-text span {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pressure-stop[aria-checked="true"] .stop-text span {
+  color: var(--heat);
+}
+
+.pressure-ritual {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+/* Panel variant: tighter gauge */
+.pressure-panel .gauge {
+  width: 120px;
+}
+
+.pressure-panel .readout-name {
+  font-size: 30px;
+}
+
+.pressure-panel .readout-mode {
+  font-size: 19px;
+}
+
+/* Compact trigger + popover (room header) */
+.pressure-compact {
+  position: relative;
+  flex: none;
+}
+
+.pressure-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 2px solid color-mix(in srgb, var(--heat) 55%, var(--line, #262b6e));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--heat) 10%, transparent);
+  padding: 2px 12px 2px 10px;
+}
+
+.pressure-trigger:hover,
+.pressure-trigger[aria-expanded="true"] {
+  border-color: var(--heat);
+}
+
+.trigger-name {
+  font-family: var(--font-pixel);
+  font-size: 21px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pressure-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 35;
+  width: 340px;
+  border: 2px solid var(--frame, #eceaff);
+  border-radius: 10px;
+  background: var(--rail, #0d0f30);
+  box-shadow: 0 0 0 2px var(--edge, #07082a), 0 18px 40px rgba(3, 4, 20, 0.6);
+  padding: 16px;
+  animation: pop-in 120ms steps(3, end);
+}
+
+/* Room heat strip under the header */
+.pressure-strip {
+  position: relative;
+  height: 4px;
+  background: var(--edge, #07082a);
+}
+
+.pressure-strip span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--level) * 25%);
+  background: linear-gradient(90deg, #6fe3c1, var(--heat));
+  transition: width 240ms steps(6, end);
+}
+
+.pressure-strip[data-level="1"] span {
+  background: var(--heat);
+}
+
+.pressure-strip[data-level="4"] span {
+  animation: strip-flicker 2.4s steps(1, end) infinite;
+}
+
+@keyframes gauge-rattle {
+  0%, 92% { transform: translate(0, 0); }
+  94% { transform: translate(1px, 0); }
+  96% { transform: translate(-1px, 0); }
+  98% { transform: translate(1px, 0); }
+}
+
+@keyframes steam-rise {
+  0% { opacity: 0; transform: translateY(0); }
+  20% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+
+@keyframes strip-flicker {
+  0%, 88%, 100% { opacity: 1; }
+  90% { opacity: 0.55; }
+  94% { opacity: 0.85; }
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .pressure-readout {
+    gap: 12px;
+  }
+
+  .pressure-dial .gauge {
+    width: 128px;
+  }
+
+  .pressure-dial .readout-name {
+    font-size: 32px;
+  }
+
+  .pressure-stops-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trigger-name {
+    display: none;
+  }
+
+  .pressure-trigger {
+    padding: 2px 8px;
+  }
+
+  .pressure-popover {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    left: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge[data-level="4"] .gauge-svg,
+  .steam i,
+  .pressure-strip span {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .steam {
+    display: none;
+  }
+}

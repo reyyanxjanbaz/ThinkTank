@@ -57,6 +57,16 @@ export const createSession = async (input: CreateSessionInput) => {
   return stripSession(session);
 };
 
+export const updateSessionTitle = async (id: string, title: string, userId?: string) => {
+  const session = findSession(id, userId);
+  if (!session) {
+    return null;
+  }
+  session.title = title;
+  session.updatedAt = now();
+  return stripSession(session);
+};
+
 export const listTurns = async (sessionId: string) =>
   turns.filter((turn) => turn.sessionId === sessionId);
 

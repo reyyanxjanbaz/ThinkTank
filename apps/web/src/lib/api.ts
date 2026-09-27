@@ -196,6 +196,20 @@ export const createSession = (
     accessToken
   );
 
+export const generateTitle = (prompt: string, accessToken?: string) =>
+  request<{ title: string }>(
+    "/api/titles",
+    { method: "POST", body: JSON.stringify({ prompt }) },
+    accessToken
+  );
+
+export const renameSession = (sessionId: string, title: string, accessToken?: string) =>
+  request<{ session: Session }>(
+    `/api/sessions/${sessionId}`,
+    { method: "PATCH", body: JSON.stringify({ title }) },
+    accessToken
+  );
+
 export const listSessions = (accessToken?: string) =>
   request<{ sessions: Session[] }>("/api/sessions", undefined, accessToken);
 
@@ -353,6 +367,7 @@ export const streamPersonaResponse = async (
     persona: string;
     prompt: string;
     mode?: string;
+    followUp?: boolean;
   },
   accessToken?: string,
   handlers?: StreamHandlers
@@ -378,6 +393,7 @@ export const streamGuestPersonaResponse = async (
     persona: string;
     prompt: string;
     mode?: string;
+    followUp?: boolean;
     history?: Array<{ speaker: string; content: string }>;
   },
   handlers?: StreamHandlers

@@ -1,126 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
-import type { Persona, Session } from "./lib/types";
+import type { Persona, Session, Turn } from "./lib/types";
 import {
   createSession,
   getPersonas,
   generateExport,
+  generateTitle,
   listArtifacts,
   listSessions,
   listTurns,
+  renameSession,
   streamGuestPersonaResponse,
   streamPersonaResponse,
   uploadArtifact,
   validatePrompt
 } from "./lib/api";
 import { hasSupabaseConfig, supabase } from "./lib/supabaseClient";
+import { PersonaSprite } from "./sprites";
+import Sidebar from "./Sidebar";
+import { PressureControl, PressureStrip } from "./Pressure";
+import Home from "./Home";
+import CouncilPanel from "./CouncilPanel";
+import {
+  FALLBACK_PERSONAS,
+  MODES,
+  PERSONA_META,
+  STARTER_PROMPTS,
+  personaStyle
+} from "./lib/council";
 
-const MODES = [
-  {
-    name: "Brainstorm",
-    description: "A wide-open idea forge. The council expands, mutates, remixes, and finds unexpected paths.",
-    intent: "Use when you need volume, novelty, naming, positioning, or a bigger frame.",
-    ritual: "Open loops, high imagination, low judgement."
-  },
-  {
-    name: "Shark Tank",
-    description: "A pressure chamber for business logic. The council interrogates market, moat, user pain, and proof.",
-    intent: "Use before pitching, pricing, fundraising, or deciding if an idea deserves oxygen.",
-    ritual: "Defend the weak spots or cut them."
-  },
-  {
-    name: "Devils Court",
-    description: "A hostile audit where every persona hunts contradictions, failure modes, and hidden costs.",
-    intent: "Use when you are attached to an idea and need the room to be intellectually honest.",
-    ritual: "No politeness tax. Only useful pressure."
-  },
-  {
-    name: "Co-Founder",
-    description: "A focused build session with strategic disagreement, practical next steps, and founder-level synthesis.",
-    intent: "Use when you already care about the idea and need a path from thought to execution.",
-    ritual: "Ship the next clean decision."
-  }
-];
-
-const FALLBACK_PERSONAS: Persona[] = [
-  {
-    name: "Devil",
-    role: "Adversary",
-    tagline: "Relentless stress test.",
-    focus: "Assumptions, contradictions, failure modes."
-  },
-  {
-    name: "Tyson",
-    role: "Visionary",
-    tagline: "Pushes bold futures.",
-    focus: "Scale, virality, imagination, upside."
-  },
-  {
-    name: "Bison",
-    role: "Operator",
-    tagline: "Reality check and execution.",
-    focus: "Feasibility, scope, timeline, constraints."
-  },
-  {
-    name: "Anshu",
-    role: "Strategist",
-    tagline: "Founder-level wisdom.",
-    focus: "Strategy, leadership, human factors."
-  },
-  {
-    name: "Bucks",
-    role: "Monetizer",
-    tagline: "Revenue and growth leverage.",
-    focus: "Pricing, distribution, monetization loops."
-  }
-];
-
-const PERSONA_META: Record<
-  string,
-  {
-    archetype: string;
-    species: string;
-    signal: string;
-    stat: string;
-    quote: string;
-  }
-> = {
-  Devil: {
-    archetype: "The Ruin Tester",
-    species: "Horned devil advocate",
-    signal: "Find the contradiction before the market does.",
-    stat: "Brutality 96",
-    quote: "If it survives me, it might survive reality."
-  },
-  Tyson: {
-    archetype: "The Cultural Igniter",
-    species: "Tiger in a hoodie",
-    signal: "Make the idea louder, stranger, and more contagious.",
-    stat: "Momentum 91",
-    quote: "Small ideas are just big ideas wearing fear."
-  },
-  Bison: {
-    archetype: "The Ground Commander",
-    species: "Centaur operator",
-    signal: "Turn the fantasy into a sequence people can execute.",
-    stat: "Feasibility 94",
-    quote: "Show me the path, the cost, and the first version."
-  },
-  Bucks: {
-    archetype: "The Money Gremlin",
-    species: "Blinged-out monkey",
-    signal: "Spot loops, margins, premium behavior, and hidden leverage.",
-    stat: "Upside 89",
-    quote: "If value moves, money can move with it."
-  },
-  Anshu: {
-    archetype: "The Calm Apex",
-    species: "Saint fox",
-    signal: "Balance ambition with timing, people, and judgment.",
-    stat: "Wisdom 98",
-    quote: "A good decision makes the founder lighter."
-  }
-};
+const readView = () =>
+  typeof window !== "undefined" && window.location.hash.startsWith("#/app") ? "app" : "home";
 
 type FeedItem = {
   id: string;
@@ -129,37 +40,12 @@ type FeedItem = {
   time: string;
 };
 
-type Page = "home" | "setup" | "war-room" | "personas" | "modes" | "vault" | "guide";
 type AuthMode = "login" | "signup";
-
-type PixelBlock = {
-  x: number;
-  y: number;
-  w?: number;
-  h?: number;
-  fill: string;
-};
 
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const CONFIGURED_API_URL = (
   import.meta.env.VITE_API_URL ?? "http://localhost:3001"
 ).replace(/\/$/, "");
-
-const NAV_ITEMS: Array<{ page: Page; label: string; helper: string }> = [
-  { page: "home", label: "Home", helper: "Briefing" },
-  { page: "setup", label: "Setup", helper: "Prep room" },
-  { page: "war-room", label: "War Room", helper: "Live session" },
-  { page: "personas", label: "Personas", helper: "Build squad" },
-  { page: "modes", label: "Modes", helper: "Set pressure" },
-  { page: "vault", label: "Vault", helper: "Reload work" },
-  { page: "guide", label: "Guide", helper: "How it flows" }
-];
-
-const PERSONA_STATUS_LABELS = {
-  loading: "Loading roster",
-  ready: "Roster online",
-  error: "Fallback roster"
-} as const;
 
 const makeId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -191,19 +77,6 @@ const formatTurnTime = (value: string) => {
     return value;
   }
   return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-};
-
-const formatSessionTime = (value: string) => {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString([], {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
 };
 
 const downloadTextFile = (filename: string, content: string, mime: string) => {
@@ -245,156 +118,68 @@ const normalizePersonaText = (value: string) =>
     .replace(/__(.*?)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1");
 
+const PLACEHOLDER_TITLE = "New council";
+
+type NamingToken = { id: string; title: string | null };
+
+const TITLE_STOPWORDS = new Set(
+  (
+    "a an the i im i'm me my we our us you your it its is are was were be been am to of for in on at by with " +
+    "and or but so if then than that this these those what which who whom how why when where should would " +
+    "could can will shall do does did give tell help make want need think about like please just really some " +
+    "any any more most very much many get got let lets let's smart move idea good bad ok okay"
+  ).split(" ")
+);
+
+// Offline fallback when the model can't name the council: keep the topic words, drop the request words.
+const fallbackTitle = (text: string) => {
+  const words = text
+    .split("\n")[0]
+    .replace(/[^\p{L}\p{N}$%'’-]+/gu, " ")
+    .split(" ")
+    .filter((word) => word && !TITLE_STOPWORDS.has(word.toLowerCase()));
+  if (words.length === 0) return PLACEHOLDER_TITLE;
+  return words
+    .slice(0, 4)
+    .map((word) => (/^[a-z]/.test(word) ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(" ");
+};
+
+// Older API builds stored the user's message once per persona in an "everyone" round,
+// so saved transcripts read: question, Devil, question, Tyson... Drop a user turn that
+// repeats the previous one within the same round (only persona replies in between).
+const ROUND_WINDOW_MS = 10 * 60 * 1000;
+const withoutRepeatedQuestions = (turns: Turn[]) => {
+  let lastQuestion: Turn | null = null;
+  return turns.filter((turn) => {
+    if (turn.persona !== "User") return true;
+    const repeat =
+      lastQuestion !== null &&
+      lastQuestion.content.trim() === turn.content.trim() &&
+      Math.abs(new Date(turn.createdAt).getTime() - new Date(lastQuestion.createdAt).getTime()) <
+        ROUND_WINDOW_MS;
+    if (!repeat) lastQuestion = turn;
+    return !repeat;
+  });
+};
+
 const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms);
   });
 
-const renderBlocks = (blocks: PixelBlock[]) =>
-  blocks.map((block, index) => (
-    <rect
-      key={`${block.fill}-${block.x}-${block.y}-${index}`}
-      x={block.x}
-      y={block.y}
-      width={block.w ?? 2}
-      height={block.h ?? 2}
-      fill={block.fill}
-    />
-  ));
-
-function PixelAvatar({ name, compact = false }: { name: string; compact?: boolean }) {
-  const b = (x: number, y: number, w: number, h: number, fill: string): PixelBlock => ({
-    x,
-    y,
-    w,
-    h,
-    fill
-  });
-
-  const baseBlocks: PixelBlock[] = [
-    b(8, 52, 48, 4, "#22150d"),
-    b(12, 56, 40, 2, "#0b0906")
-  ];
-
-  const avatarBlocks: Record<string, PixelBlock[]> = {
-    Devil: [
-      b(14, 8, 8, 8, "#72130f"),
-      b(18, 6, 6, 8, "#ff533a"),
-      b(42, 8, 8, 8, "#72130f"),
-      b(40, 6, 6, 8, "#ff533a"),
-      b(18, 14, 28, 4, "#8d1813"),
-      b(14, 18, 36, 28, "#be241d"),
-      b(18, 22, 28, 20, "#f24935"),
-      b(18, 24, 10, 4, "#8d1813"),
-      b(36, 24, 10, 4, "#8d1813"),
-      b(22, 30, 6, 4, "#0b0906"),
-      b(36, 30, 6, 4, "#0b0906"),
-      b(26, 34, 10, 4, "#5a0f0b"),
-      b(28, 38, 8, 4, "#fff2d0"),
-      b(24, 42, 16, 2, "#5a0f0b"),
-      b(18, 46, 28, 6, "#38100d"),
-      b(24, 46, 16, 2, "#ffd45f")
-    ],
-    Tyson: [
-      b(10, 22, 8, 14, "#121416"),
-      b(46, 22, 8, 14, "#121416"),
-      b(12, 24, 4, 10, "#39a4d8"),
-      b(48, 24, 4, 10, "#39a4d8"),
-      b(16, 14, 34, 34, "#274436"),
-      b(20, 18, 26, 26, "#ff9831"),
-      b(18, 12, 10, 8, "#ff9f38"),
-      b(36, 12, 10, 8, "#ff9f38"),
-      b(22, 22, 6, 4, "#ca5f1a"),
-      b(36, 22, 6, 4, "#ca5f1a"),
-      b(24, 28, 4, 4, "#0b0906"),
-      b(36, 28, 4, 4, "#0b0906"),
-      b(24, 34, 18, 2, "#ca5f1a"),
-      b(28, 36, 8, 4, "#fff2cf"),
-      b(22, 40, 20, 2, "#ca5f1a"),
-      b(14, 44, 38, 8, "#1a2d24"),
-      b(20, 46, 26, 4, "#3f6c56")
-    ],
-    Bison: [
-      b(8, 36, 38, 12, "#684022"),
-      b(42, 38, 12, 8, "#7f4c2a"),
-      b(10, 48, 6, 8, "#20130b"),
-      b(24, 48, 6, 8, "#20130b"),
-      b(40, 46, 6, 10, "#20130b"),
-      b(50, 44, 4, 10, "#20130b"),
-      b(24, 16, 16, 16, "#b68557"),
-      b(22, 20, 20, 8, "#8b5c35"),
-      b(20, 10, 8, 8, "#efe2cb"),
-      b(36, 10, 8, 8, "#efe2cb"),
-      b(28, 22, 4, 4, "#0b0906"),
-      b(36, 22, 4, 4, "#0b0906"),
-      b(30, 28, 8, 4, "#31432f"),
-      b(26, 32, 12, 4, "#2a3a29"),
-      b(16, 30, 8, 6, "#b68557"),
-      b(38, 30, 8, 6, "#b68557")
-    ],
-    Bucks: [
-      b(16, 14, 32, 6, "#e7b94f"),
-      b(14, 20, 36, 24, "#7f4f2d"),
-      b(10, 24, 8, 10, "#65381f"),
-      b(46, 24, 8, 10, "#65381f"),
-      b(22, 24, 20, 16, "#bc7d4a"),
-      b(20, 28, 24, 6, "#111318"),
-      b(22, 30, 8, 2, "#6ad7ff"),
-      b(34, 30, 8, 2, "#6ad7ff"),
-      b(24, 36, 16, 4, "#f9e8bf"),
-      b(22, 42, 20, 2, "#734224"),
-      b(18, 44, 30, 4, "#f4cd66"),
-      b(20, 48, 26, 2, "#e7b94f"),
-      b(18, 50, 28, 6, "#b7472a"),
-      b(48, 40, 4, 6, "#f4cd66"),
-      b(14, 40, 4, 6, "#f4cd66"),
-      b(24, 20, 18, 2, "#f4cd66")
-    ],
-    Anshu: [
-      b(18, 6, 28, 4, "#f4cc66"),
-      b(20, 8, 24, 2, "#fff3cb"),
-      b(20, 12, 10, 8, "#d87b3a"),
-      b(34, 12, 10, 8, "#d87b3a"),
-      b(16, 18, 32, 28, "#cb6d31"),
-      b(22, 22, 20, 18, "#f9efd1"),
-      b(24, 28, 4, 4, "#0b0906"),
-      b(36, 28, 4, 4, "#0b0906"),
-      b(28, 34, 8, 4, "#d87b3a"),
-      b(20, 40, 24, 4, "#f9efd1"),
-      b(20, 44, 24, 8, "#efe3bc"),
-      b(16, 50, 32, 4, "#8ef4c3"),
-      b(24, 16, 16, 2, "#f5a153"),
-      b(18, 22, 4, 8, "#cb6d31"),
-      b(42, 22, 4, 8, "#cb6d31")
-    ]
-  };
-
-  const blocks = [...baseBlocks, ...(avatarBlocks[name] ?? avatarBlocks.Devil)];
-
+function PixelAvatar({
+  name,
+  compact = false,
+  talking = false
+}: {
+  name: string;
+  compact?: boolean;
+  talking?: boolean;
+}) {
   return (
-    <div className={compact ? "avatar-shell avatar-shell-compact" : "avatar-shell"}>
-      <svg
-        className="pixel-avatar"
-        viewBox="0 0 64 64"
-        role="img"
-        aria-label={`${name} pixel avatar`}
-        shapeRendering="crispEdges"
-      >
-        <rect x="0" y="0" width="64" height="64" fill="#13150c" />
-        <rect x="4" y="4" width="56" height="56" fill="#20291c" />
-        <rect x="4" y="4" width="56" height="4" fill="#3e573b" />
-        {renderBlocks(blocks)}
-      </svg>
-    </div>
-  );
-}
-
-function PageKicker({ label, value }: { label: string; value?: string }) {
-  return (
-    <div className="page-kicker">
-      <span className="status-light" />
-      <span>{label}</span>
-      {value && <strong>{value}</strong>}
+    <div className={compact ? "avatar-shell avatar-shell-compact" : "avatar-shell"} data-talking={talking}>
+      <PersonaSprite name={name} talking={talking} className="pixel-avatar" />
     </div>
   );
 }
@@ -417,37 +202,53 @@ export default function App() {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isRecoveryFlow, setIsRecoveryFlow] = useState(false);
   const [mode, setMode] = useState(MODES[0].name);
-  const [activePage, setActivePage] = useState<Page>("home");
   const [sessionTitle, setSessionTitle] = useState("");
-  const [selectedPersonas, setSelectedPersonas] = useState<string[]>([
-    "Devil",
-    "Tyson"
-  ]);
+  const [selectedPersonas, setSelectedPersonas] = useState<string[]>(FALLBACK_PERSONAS.map((persona) => persona.name));
   const [activePersona, setActivePersona] = useState("Devil");
   const [prompt, setPrompt] = useState("");
-  const [artifactFile, setArtifactFile] = useState<File | null>(null);
+  const [artifactFileState, setArtifactFile] = useState<File | null>(null);
   const [artifactStatus, setArtifactStatus] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionsStatus, setSessionsStatus] = useState("");
   const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [statusMessage, setStatusMessage] = useState("Council idle.");
+  const [statusMessage, setStatusMessage] = useState("");
   const [isLaunching, setIsLaunching] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [hasNewFeed, setHasNewFeed] = useState(false);
+  // Set when someone tries to unseat the last mind on the welcome screen, so the refusal is never silent.
+  const [refusedWelcomeSeat, setRefusedWelcomeSeat] = useState<string | null>(null);
+  const [view, setView] = useState<"home" | "app">(readView);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem("tt-sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [isCouncilOpen, setIsCouncilOpen] = useState(false);
+  // Who answers the next message: any mix of seated minds, answering in seat order.
+  const [askList, setAskList] = useState<string[]>(() => FALLBACK_PERSONAS.map((persona) => persona.name));
+  const [speakingNow, setSpeakingNow] = useState<string | null>(null);
+  const [roundQueue, setRoundQueue] = useState<string[]>([]);
   const feedScrollRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+  const namingRef = useRef<NamingToken | null>(null);
+  // Titles set in this tab. A list response that was already in flight (or a server that
+  // couldn't save the rename) must not put the placeholder back.
+  const titleOverridesRef = useRef(new Map<string, string>());
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const accessToken = authSession?.access_token ?? "";
   const isSignedIn = Boolean(authSession?.access_token);
   const authRedirectTo =
     import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() ||
     (typeof window !== "undefined" ? window.location.origin : undefined);
-  const personaStatusLabel = PERSONA_STATUS_LABELS[personaStatus];
   const authIdentity = requiresAuth
     ? authSession?.user?.email ?? authSession?.user?.id ?? "Signed out"
     : "Local mode";
-  const authStatus = requiresAuth ? (authSession ? "Signed in" : "Signed out") : "No auth required";
 
   const isFeedNearBottom = (element: HTMLDivElement) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 48;
@@ -469,11 +270,22 @@ export default function App() {
     setSessionsStatus("Loading sessions...");
     try {
       const data = await listSessions(token);
-      setSessions(data.sessions);
+      const overrides = titleOverridesRef.current;
+      setSessions(
+        data.sessions.map((item) => {
+          const local = overrides.get(item.id);
+          if (!local) return item;
+          if (item.title === local) {
+            overrides.delete(item.id);
+            return item;
+          }
+          return { ...item, title: local };
+        })
+      );
       setSessionsStatus("");
     } catch (error) {
-      setSessions([]);
-      setSessionsStatus("Unable to load sessions.");
+      // Keep whatever list we already have; a failed refresh shouldn't erase it.
+      setSessionsStatus("Couldn't load your saved councils. Check your connection and try again.");
     }
   };
 
@@ -525,6 +337,46 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    // Only a real page switch (home <-> app) resets scroll; in-page anchors must not.
+    const syncView = () => {
+      const next = readView();
+      setView((current) => {
+        if (current !== next) window.scrollTo(0, 0);
+        return next;
+      });
+    };
+    window.addEventListener("hashchange", syncView);
+    return () => window.removeEventListener("hashchange", syncView);
+  }, []);
+
+  const openApp = () => {
+    window.location.hash = "#/app";
+  };
+
+  const goHome = () => {
+    window.location.hash = "#/";
+  };
+
+  // Grow the composer with its content, up to a cap.
+  useEffect(() => {
+    const element = promptRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 220)}px`;
+  }, [prompt]);
+
+  useEffect(() => {
+    if (!isDrawerOpen && !isCouncilOpen) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setIsDrawerOpen(false);
+      setIsCouncilOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isDrawerOpen, isCouncilOpen]);
+
   const clearPasswordInputs = () => {
     setAuthPassword("");
     setAuthPasswordConfirm("");
@@ -572,41 +424,43 @@ export default function App() {
     }
   }, [selectedPersonas, personas, activePersona]);
 
+  const askTargets = selectedPersonas.filter((name) => askList.includes(name));
+  const askEveryone = selectedPersonas.length > 1 && askTargets.length === selectedPersonas.length;
+
   const personaLookup = useMemo(() => {
     const map = new Map(personas.map((persona) => [persona.name, persona]));
     return map;
   }, [personas]);
 
-  const selectedPersonaObjects = useMemo(
-    () =>
-      selectedPersonas.map(
-        (name) => personaLookup.get(name) ?? FALLBACK_PERSONAS.find((item) => item.name === name)
-      ).filter((persona): persona is Persona => Boolean(persona)),
-    [personaLookup, selectedPersonas]
-  );
-
-  const activeMode = MODES.find((item) => item.name === mode) ?? MODES[0];
-  const activePersonaData = personaLookup.get(activePersona);
 
   useEffect(() => {
     const element = feedScrollRef.current;
     if (!element) return;
+    // Follow the conversation until the reader scrolls up; resume when they return to the bottom.
+    // Streaming grows the content between scroll events, so only an upward
+    // scroll counts as the reader leaving the bottom.
+    let lastTop = element.scrollTop;
     const handleScroll = () => {
+      const top = element.scrollTop;
       if (isFeedNearBottom(element)) {
+        stickToBottomRef.current = true;
         setHasNewFeed(false);
+      } else if (top < lastTop - 4) {
+        stickToBottomRef.current = false;
       }
+      lastTop = top;
     };
     handleScroll();
     element.addEventListener("scroll", handleScroll);
     return () => {
       element.removeEventListener("scroll", handleScroll);
     };
-  }, []);
+  }, [isSignedIn]);
 
   useEffect(() => {
     const element = feedScrollRef.current;
     if (!element) return;
-    if (isFeedNearBottom(element)) {
+    if (stickToBottomRef.current) {
       scrollFeedToBottom();
       setHasNewFeed(false);
       return;
@@ -622,14 +476,31 @@ export default function App() {
         if (prev.length === 1) return prev;
         return prev.filter((persona) => persona !== name);
       }
+      // If everyone seated was answering, the newcomer answers too.
+      setAskList((list) => (prev.every((seated) => list.includes(seated)) ? [...list, name] : list));
       return [...prev, name];
     });
   };
 
-  const goToPage = (page: Page) => {
-    setActivePage(page);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  // Same as togglePersona, but used on the welcome screen where there's no roster
+  // panel to show a refusal, so an attempt to unseat the last mind flashes a note instead.
+  const flipWelcomeSeat = (name: string) => {
+    if (selectedPersonas.includes(name) && selectedPersonas.length === 1) {
+      setRefusedWelcomeSeat(name);
+      return;
+    }
+    togglePersona(name);
   };
+
+  useEffect(() => {
+    if (!refusedWelcomeSeat) return;
+    const timer = window.setTimeout(() => setRefusedWelcomeSeat(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [refusedWelcomeSeat]);
+
+  useEffect(() => {
+    if (selectedPersonas.length > 1) setRefusedWelcomeSeat(null);
+  }, [selectedPersonas]);
 
   const handleSignInWithGitHub = async () => {
     if (!supabase) {
@@ -833,9 +704,10 @@ export default function App() {
     setAuthMessage("Signed out.");
   };
 
-  const handleUpload = async () => {
+  const handleUpload = async (fileArg?: File) => {
+    const artifactFile = fileArg ?? artifactFileState;
     if (!session) {
-      setArtifactStatus("Launch a session before uploading.");
+      setArtifactStatus("Send your first message, then attach files.");
       return;
     }
 
@@ -845,7 +717,7 @@ export default function App() {
     }
 
     if (artifactFile.size > MAX_ARTIFACT_BYTES) {
-      setArtifactStatus("File too large. Max 5MB.");
+      setArtifactStatus(`${artifactFile.name} is over 5 MB. Try a smaller or text-only version.`);
       return;
     }
 
@@ -854,11 +726,11 @@ export default function App() {
       return;
     }
 
-    setArtifactStatus("Uploading artifact...");
+    setArtifactStatus(`Uploading ${artifactFile.name}...`);
 
     try {
       const response = await uploadArtifact(session.id, artifactFile, accessToken);
-      setArtifactStatus("Uploaded. Parsing document...");
+      setArtifactStatus(`Reading ${artifactFile.name}...`);
       setArtifactFile(null);
 
       const startedAt = Date.now();
@@ -880,7 +752,7 @@ export default function App() {
               "Upload complete, but this PDF has little/no extractable text (likely scanned or image-only)."
             );
           } else {
-            setArtifactStatus(`Upload complete. ${latest.filename} is ready for context.`);
+            setArtifactStatus(`${latest.filename} is in the room. The council will use it as context.`);
           }
           return;
         }
@@ -900,17 +772,17 @@ export default function App() {
     }
   };
 
-  const handleLaunch = async () => {
-    if (isLaunching) return;
+  const handleLaunch = async (titleHint?: string): Promise<Session | null> => {
+    if (isLaunching) return null;
 
     if (requiresAuth && (isAuthInitializing || !accessToken)) {
       setStatusMessage("Checking sign-in state. Try again in a moment.");
-      return;
+      return null;
     }
 
-    const resolvedTitle = sessionTitle.trim() || "Untitled Council";
+    const resolvedTitle = sessionTitle.trim() || titleHint?.trim() || "Untitled Council";
     setIsLaunching(true);
-    setStatusMessage("Initializing council...");
+    setStatusMessage("");
 
     const setStartedState = (nextSession: Session, message: string) => {
       setSession(nextSession);
@@ -918,7 +790,6 @@ export default function App() {
       setArtifactStatus("");
       setExportStatus("");
       setStatusMessage(message);
-      setActivePage("war-room");
     };
 
     try {
@@ -929,24 +800,31 @@ export default function App() {
         },
         accessToken
       );
-      setStartedState(response.session, "Council online.");
-      await refreshSessions(accessToken);
+      setStartedState(response.session, "");
+      void refreshSessions(accessToken);
+      return response.session;
     } catch (error) {
       if (requiresAuth) {
-        setStatusMessage("Cloud session launch failed. Check API and Supabase.");
-        return;
+        setStatusMessage("Couldn't open the room. The API or Supabase isn't responding.");
+        return null;
       }
       const localSession = makeLocalSession(mode, resolvedTitle);
       setStartedState(
         localSession,
-        "API launch failed. Local draft session started for now."
+        "API unreachable. Running as a local draft for now."
       );
+      return localSession;
     } finally {
       setIsLaunching(false);
     }
   };
 
   const handleLoadSession = async (target: Session) => {
+    // Switching mid-round would let the remaining replies land in the other council.
+    if (isSending || target.id === session?.id) {
+      setIsDrawerOpen(false);
+      return;
+    }
     if (requiresAuth && !accessToken) {
       setSessionsStatus("Sign in to load saved sessions.");
       return;
@@ -956,21 +834,23 @@ export default function App() {
     setMode(target.mode ?? mode);
     setStatusMessage("Loading transcript...");
     setFeed([]);
-    setActivePage("war-room");
+    namingRef.current = null;
+    stickToBottomRef.current = true;
+    setIsDrawerOpen(false);
 
     try {
       const data = await listTurns(target.id, accessToken);
-      const loadedFeed = data.turns.map((turn) => ({
+      const loadedFeed = withoutRepeatedQuestions(data.turns).map((turn) => ({
         id: turn.id,
         speaker: turn.persona,
         content: turn.content,
         time: formatTurnTime(turn.createdAt)
       }));
       setFeed(loadedFeed);
-      setStatusMessage("Session loaded.");
+      setStatusMessage("");
     } catch (error) {
       setFeed([]);
-      setStatusMessage("Failed to load session transcript.");
+      setStatusMessage("Couldn't load this council's transcript. Pick it again from the list to retry.");
     }
   };
 
@@ -1061,23 +941,61 @@ export default function App() {
     );
   };
 
-  const handleSend = async () => {
-    if (!session) {
-      setStatusMessage("Launch a session before sending prompts.");
-      setActivePage("war-room");
-      return;
+  // Names a new council from its opening message, off the critical path of the first reply.
+  // The token follows the council if its local draft is promoted to a saved session, and a
+  // new council or a loaded one replaces the token, so a late title can't land elsewhere.
+  const nameCouncil = async (token: NamingToken, openingMessage: string) => {
+    let title: string;
+    try {
+      title = (await generateTitle(openingMessage, accessToken)).title;
+    } catch {
+      title = fallbackTitle(openingMessage);
     }
+    if (namingRef.current !== token) return;
+    token.title = title;
+    applyTitle(token.id, title);
+  };
 
+  const applyTitle = (sessionId: string, title: string) => {
+    if (!sessionId.startsWith("local-")) titleOverridesRef.current.set(sessionId, title);
+    setSession((prev) => (prev && prev.id === sessionId ? { ...prev, title } : prev));
+    setSessions((prev) => prev.map((item) => (item.id === sessionId ? { ...item, title } : item)));
+    if (!sessionId.startsWith("local-")) {
+      // Refresh after saving so an earlier in-flight list request can't bring back the old title.
+      void renameSession(sessionId, title, accessToken)
+        .then(() => refreshSessions())
+        .catch(() => {
+          // The title still shows here; the saved list keeps the placeholder until reload.
+        });
+    }
+  };
+
+  const handleSend = async () => {
     const trimmed = prompt.trim();
     if (!trimmed) {
-      setStatusMessage("Enter a prompt to continue.");
+      setStatusMessage("Type what you want the council to look at.");
+      promptRef.current?.focus();
       return;
     }
 
     if (isSending) return;
-    setIsSending(true);
+
+    if (askTargets.length === 0) {
+      setStatusMessage("Pick at least one mind to answer.");
+      return;
+    }
 
     let activeSession = session;
+    if (!activeSession) {
+      activeSession = await handleLaunch(PLACEHOLDER_TITLE);
+      if (!activeSession) return;
+      const token: NamingToken = { id: activeSession.id, title: null };
+      namingRef.current = token;
+      void nameCouncil(token, trimmed);
+    }
+
+    setIsSending(true);
+
     let effectiveToken = accessToken;
 
     if (requiresAuth && !effectiveToken) {
@@ -1088,15 +1006,24 @@ export default function App() {
 
     if (activeSession.id.startsWith("local-") && (!requiresAuth || Boolean(effectiveToken))) {
       try {
+        const localId = activeSession.id;
+        const naming = namingRef.current?.id === localId ? namingRef.current : null;
         const response = await createSession(
           {
-            title: activeSession.title ?? "Untitled Council",
+            title: naming?.title ?? activeSession.title ?? PLACEHOLDER_TITLE,
             mode: activeSession.mode ?? mode
           },
           effectiveToken
         );
         activeSession = response.session;
         setSession(response.session);
+        if (naming) {
+          naming.id = response.session.id;
+          // The title may have arrived while the draft was being saved.
+          if (naming.title && naming.title !== response.session.title) {
+            applyTitle(response.session.id, naming.title);
+          }
+        }
         await refreshSessions(effectiveToken);
       } catch {
         // stay in local draft mode if cloud bootstrap fails
@@ -1106,22 +1033,28 @@ export default function App() {
     const useCloudStreaming =
       !activeSession.id.startsWith("local-") && (!requiresAuth || Boolean(effectiveToken));
 
-    const userEntry: FeedItem = {
-      id: makeId(),
-      speaker: "User",
-      content: trimmed,
-      time: formatClock()
-    };
+    if (!useCloudStreaming && requiresAuth) {
+      setStatusMessage("Session unavailable. Start a new council.");
+      setIsSending(false);
+      return;
+    }
 
-    const responseId = makeId();
-    const personaEntry: FeedItem = {
-      id: responseId,
-      speaker: activePersona,
-      content: "",
-      time: formatClock()
-    };
+    const targets = askTargets.slice();
 
-    const promptHistory = feed
+    if (useCloudStreaming) {
+      try {
+        await validatePrompt(
+          { sessionId: activeSession.id, persona: targets[0], prompt: trimmed },
+          effectiveToken
+        );
+      } catch {
+        setStatusMessage("That prompt was blocked, or the API isn't responding.");
+        setIsSending(false);
+        return;
+      }
+    }
+
+    const history = feed
       .filter((item) => item.content.trim())
       .slice(-12)
       .map((item) => ({
@@ -1132,688 +1065,469 @@ export default function App() {
         content: item.content
       }));
 
-    const appendToken = (token: string) => {
-      setFeed((prev) =>
-        prev.map((item) =>
-          item.id === responseId
-            ? { ...item, content: `${item.content}${token}` }
-            : item
-        )
-      );
+    setFeed((prev) => [
+      ...prev,
+      { id: makeId(), speaker: "User", content: trimmed, time: formatClock() }
+    ]);
+    setPrompt("");
+
+    // Streams one persona's reply into a fresh feed entry and returns the full text.
+    const streamOne = async (persona: string, followUp: boolean) => {
+      const responseId = makeId();
+      let collected = "";
+      setFeed((prev) => [
+        ...prev,
+        { id: responseId, speaker: persona, content: "", time: formatClock() }
+      ]);
+      const appendToken = (token: string) => {
+        collected += token;
+        setFeed((prev) =>
+          prev.map((item) =>
+            item.id === responseId ? { ...item, content: `${item.content}${token}` } : item
+          )
+        );
+      };
+      const streamGuest = () =>
+        streamGuestPersonaResponse(
+          { persona, prompt: trimmed, mode, history: history.slice(-20), followUp },
+          { onToken: appendToken }
+        );
+
+      if (!useCloudStreaming) {
+        try {
+          await streamGuest();
+        } catch (error) {
+          writeStreamFailureToFeed(responseId, error);
+        }
+        return collected;
+      }
+
+      try {
+        await streamPersonaResponse(
+          activeSession.id,
+          { persona, prompt: trimmed, mode, followUp },
+          effectiveToken,
+          { onToken: appendToken }
+        );
+      } catch (error) {
+        if (requiresAuth) {
+          writeStreamFailureToFeed(responseId, error);
+        } else {
+          collected = "";
+          setFeed((prev) =>
+            prev.map((item) => (item.id === responseId ? { ...item, content: "" } : item))
+          );
+          try {
+            await streamGuest();
+          } catch (guestError) {
+            writeStreamFailureToFeed(responseId, guestError);
+          }
+        }
+      }
+      return collected;
     };
 
-    const streamGuestResponse = async () =>
-      streamGuestPersonaResponse(
-        {
-          persona: activePersona,
-          prompt: trimmed,
-          mode,
-          history: promptHistory
-        },
-        {
-          onToken: appendToken,
-          onDone: (fullText) => {
-            setStatusMessage(
-              fullText.trim()
-                ? `${activePersona} completed the response.`
-                : "Guest stream finished without content."
-            );
-          }
-        }
-      );
-
-    if (!useCloudStreaming) {
-      if (requiresAuth) {
-        setStatusMessage("Session unavailable. Start a new cloud session.");
-        setIsSending(false);
-        return;
-      }
-      setFeed((prev) => [...prev, userEntry, personaEntry]);
-      setPrompt("");
-      setStatusMessage(`Streaming ${activePersona} in guest mode...`);
-      try {
-        await streamGuestResponse();
-      } catch (error) {
-        writeStreamFailureToFeed(responseId, error);
-      } finally {
-        setIsSending(false);
-      }
-      return;
-    }
-
     try {
-      await validatePrompt(
-        {
-          sessionId: activeSession.id,
-          persona: activePersona,
-          prompt: trimmed
-        },
-        effectiveToken
-      );
-    } catch (error) {
-      setStatusMessage("Prompt blocked or API unavailable.");
-      setIsSending(false);
-      return;
-    }
-
-    setFeed((prev) => [...prev, userEntry, personaEntry]);
-    setPrompt("");
-    setStatusMessage(`Streaming ${activePersona}...`);
-
-    try {
-      await streamPersonaResponse(
-        activeSession.id,
-        {
-          persona: activePersona,
-          prompt: trimmed,
-          mode
-        },
-        effectiveToken,
-        {
-          onToken: (token) => {
-            appendToken(token);
-          },
-          onDone: (fullText) => {
-            setStatusMessage(
-              fullText.trim()
-                ? `${activePersona} completed the response.`
-                : "Stream finished without content."
-            );
-          }
-        }
-      );
-    } catch (error) {
-      if (requiresAuth) {
-        writeStreamFailureToFeed(responseId, error);
-      } else {
-        setStatusMessage("Cloud streaming failed; retrying in guest mode...");
-        setFeed((prev) =>
-          prev.map((item) => (item.id === responseId ? { ...item, content: "" } : item))
-        );
-        try {
-          await streamGuestResponse();
-        } catch (guestError) {
-          writeStreamFailureToFeed(responseId, guestError);
-        }
+      stickToBottomRef.current = true;
+      for (const [index, persona] of targets.entries()) {
+        setRoundQueue(targets.slice(index + 1));
+        setSpeakingNow(persona);
+        setStatusMessage(`${persona} is speaking...`);
+        const reply = await streamOne(persona, index > 0);
+        // Later speakers hear the question and the earlier replies, so they can build on and argue.
+        if (index === 0) history.push({ speaker: "User", content: trimmed });
+        if (reply.trim()) history.push({ speaker: persona, content: reply });
       }
+      setStatusMessage("");
     } finally {
+      setSpeakingNow(null);
+      setRoundQueue([]);
       setIsSending(false);
     }
   };
 
-  const handleStartQuest = async () => {
-    if (!session) {
-      goToPage("setup");
-      return;
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((value) => {
+      try {
+        window.localStorage.setItem("tt-sidebar-collapsed", value ? "0" : "1");
+      } catch {
+        // Remembering the rail is a convenience only.
+      }
+      return !value;
+    });
+  };
+
+  const handleRenameCouncil = (id: string, title: string) => {
+    if (namingRef.current?.id === id) namingRef.current = null;
+    applyTitle(id, title);
+  };
+
+  const startNewCouncil = () => {
+    if (isSending) return;
+    namingRef.current = null;
+    setSession(null);
+    setFeed([]);
+    setSessionTitle("");
+    setPrompt("");
+    setArtifactFile(null);
+    setArtifactStatus("");
+    setExportStatus("");
+    setStatusMessage("");
+    setIsCouncilOpen(false);
+    setIsDrawerOpen(false);
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  };
+
+  const lastFeedId = feed[feed.length - 1]?.id;
+  const starters = STARTER_PROMPTS[mode] ?? STARTER_PROMPTS.Brainstorm;
+  const isFreshRoom = !session && feed.length === 0;
+  const askLabel =
+    askTargets.length === 0
+      ? "Pick who answers"
+      : askEveryone
+        ? "Ask everyone"
+        : askTargets.length === 1
+          ? `Ask ${askTargets[0]}`
+          : `Ask ${askTargets.length}`;
+  const visibleNotice = !isSending && statusMessage ? statusMessage : "";
+
+  const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void handleSend();
     }
-    goToPage("war-room");
   };
 
-  const handleWatchDemo = () => {
-    setStatusMessage("Demo path: choose mode, assemble personas, launch the room, then send one sharp prompt.");
-    goToPage("guide");
+  const applyStarter = (text: string) => {
+    setPrompt(text);
+    promptRef.current?.focus();
   };
 
-  const handleHeaderCta = async () => {
-    await handleStartQuest();
+  const toggleAsk = (name: string) => {
+    setAskList((list) => (list.includes(name) ? list.filter((item) => item !== name) : [...list, name]));
+    setActivePersona(name);
   };
 
-  const renderHome = () => (
-    <main className="app-page home-grid">
-      <section className="hero-copy">
-        <PageKicker label="Externalized intelligence OS" value={personaStatusLabel} />
-        <h1 className="hero-title">Never think alone again.</h1>
-        <p className="hero-text">
-          Think Tank is a retro strategic war room where five opinionated AI minds
-          attack, expand, monetize, ground, and mature your ideas in real time.
-          It is not a chat box. It is a council chamber for ambitious decisions.
-        </p>
-        <div className="hero-actions">
-          <button type="button" className="pixel-button" onClick={() => goToPage("setup")}>
-            Initialize Council
+  const pickSpeaker = (name: string) => {
+    setAskList([name]);
+    setActivePersona(name);
+  };
+
+  const personaState = (name: string) => {
+    if (speakingNow === name) return "Speaking";
+    if (!selectedPersonas.includes(name)) return "Not seated";
+    if (isSending) return roundQueue.includes(name) ? "Up next" : "Listening";
+    if (askTargets.includes(name)) return "Answers next";
+    return "Listening";
+  };
+
+  const renderComposer = () => (
+    <div className="composer" style={personaStyle(askTargets.length === 1 ? askTargets[0] : "")}>
+      <div className="speaker-row" role="group" aria-label="Who answers">
+        <button
+          type="button"
+          className="speaker-chip speaker-chip-all"
+          aria-pressed={askEveryone}
+          onClick={() => setAskList(selectedPersonas.slice())}
+          disabled={selectedPersonas.length < 2}
+          title="Every seated mind answers in turn and can react to the others"
+        >
+          Everyone
+        </button>
+        {selectedPersonas.map((name) => (
+          <button
+            key={name}
+            type="button"
+            className="speaker-chip"
+            style={personaStyle(name)}
+            aria-pressed={askTargets.includes(name)}
+            data-speaking={speakingNow === name}
+            onClick={() => toggleAsk(name)}
+            title={askTargets.includes(name) ? `${name} will answer. Tap to leave them out.` : `Tap to have ${name} answer`}
+          >
+            <span className="chip-face" aria-hidden="true">
+              <PixelAvatar name={name} compact talking={speakingNow === name} />
+            </span>
+            {name}
           </button>
-          <button type="button" className="pixel-button-alt" onClick={handleWatchDemo}>
-            Read the Flow
+        ))}
+        {!askEveryone && askTargets.length > 1 && (
+          <span className="speaker-note">{askTargets.length} answer in turn</span>
+        )}
+      </div>
+
+      {(artifactFileState || artifactStatus) && (
+        <div className="attach-status" role="status" aria-live="polite">
+          <span>{artifactStatus || artifactFileState?.name}</span>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              setArtifactFile(null);
+              setArtifactStatus("");
+            }}
+          >
+            Dismiss
           </button>
         </div>
-        <div className="achievement-row" aria-label="Product capabilities">
-          <span className="achievement-chip">Structured conflict</span>
-          <span className="achievement-chip">Live streaming</span>
-          <span className="achievement-chip">Artifact review</span>
-          <span className="achievement-chip">Session vault</span>
-        </div>
-      </section>
+      )}
 
-      <section className="command-screen" aria-label="Council preview">
-        <div className="screen-topline">
-          <span>THINKTANK://BOOT</span>
-          <span>{session ? "ROOM ACTIVE" : "ROOM IDLE"}</span>
-        </div>
-        <div className="party-lineup">
-          {FALLBACK_PERSONAS.map((persona) => (
-            <div key={persona.name} className="party-slot">
-              <PixelAvatar name={persona.name} compact />
-              <span>{persona.name}</span>
-            </div>
-          ))}
-        </div>
-        <div className="terminal-card">
-          <p>&gt; load problem</p>
-          <p>&gt; assemble cognitive archetypes</p>
-          <p>&gt; pressure-test assumptions</p>
-          <p className="terminal-hot">&gt; synthesize next move</p>
-        </div>
-      </section>
-
-      <section className="section-band full-bleed">
-        <div className="band-card">
-          <span className="band-index">01</span>
-          <h2>Bring the messy idea.</h2>
-          <p>Drop the raw thought, pitch, feature, decision, business model, or artifact before it is polished.</p>
-        </div>
-        <div className="band-card">
-          <span className="band-index">02</span>
-          <h2>Pick the pressure.</h2>
-          <p>Choose imagination, investor interrogation, hostile critique, or co-founder synthesis.</p>
-        </div>
-        <div className="band-card">
-          <span className="band-index">03</span>
-          <h2>Leave with leverage.</h2>
-          <p>The output should be sharper thinking: risks, pivots, next actions, and the argument behind them.</p>
-        </div>
-      </section>
-    </main>
+      <div className="composer-box">
+        <label
+          className="attach-button"
+          data-disabled={!session}
+          title={session ? "Attach a PDF, TXT or MD file (up to 5 MB)" : "Send your first message, then attach files"}
+        >
+          <input
+            type="file"
+            className="sr-only"
+            accept=".pdf,.txt,.md"
+            disabled={!session}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (!file) return;
+              setArtifactFile(file);
+              void handleUpload(file);
+            }}
+          />
+          <svg viewBox="0 0 12 14" width="16" height="19" shapeRendering="crispEdges" aria-hidden="true">
+            <path d="M1 0h7v1H1zM0 1h1v13H0zM1 13h10v1H1zM11 4h1v10h-1zM8 1h1v3h3v1H8zM9 2h1v1H9zM3 6h6v1H3zM3 8h6v1H3zM3 10h4v1H3z" fill="currentColor" />
+          </svg>
+          <span className="sr-only">Attach a file</span>
+        </label>
+        <label className="sr-only" htmlFor="council-prompt">
+          Your message
+        </label>
+        <textarea
+          id="council-prompt"
+          ref={promptRef}
+          rows={1}
+          className="composer-input"
+          placeholder={
+            isFreshRoom
+              ? "Describe your idea..."
+              : askEveryone
+                ? "Ask the whole council..."
+                : askTargets.length === 1
+                  ? `Reply to ${askTargets[0]}...`
+                  : askTargets.length === 0
+                    ? "Pick who answers above..."
+                    : `Ask ${askTargets.join(", ").replace(/, ([^,]*)$/, " and $1")}...`
+          }
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={handlePromptKeyDown}
+        />
+        <button
+          type="button"
+          className="send-button"
+          onClick={() => void handleSend()}
+          disabled={isSending || isLaunching || !prompt.trim() || askTargets.length === 0}
+          aria-label={isSending ? "Council is answering" : askLabel}
+        >
+          <span className="send-label">{isLaunching ? "Opening..." : isSending ? "Listening..." : askLabel}</span>
+          <span className="send-icon" aria-hidden="true">
+            ▶
+          </span>
+        </button>
+      </div>
+    </div>
   );
 
-  const renderSetup = () => (
-    <main className="app-page setup-grid">
-      <section className="setup-panel">
-        <PageKicker label="Session setup" value={personaStatusLabel} />
-        <h1 className="page-title">Prepare the Council</h1>
-        <p className="page-copy">
-          Choose the pressure, name the mission, and assemble the right minds before you enter the room.
-        </p>
-        <label className="field-label" htmlFor="session-title">
-          Session title
-        </label>
-        <input
-          id="session-title"
-          className="pixel-input"
-          value={sessionTitle}
-          onChange={(event) => setSessionTitle(event.target.value)}
-          placeholder="Untitled Council"
-          autoComplete="off"
-        />
+  const renderWelcome = () => (
+    <section className="welcome" aria-labelledby="welcome-title">
+      <div className="party" role="group" aria-label="Seat the council">
+        {personas.map((persona) => {
+          const seated = selectedPersonas.includes(persona.name);
+          const locked = seated && selectedPersonas.length === 1;
+          return (
+            <button
+              key={persona.name}
+              type="button"
+              className="party-seat"
+              style={personaStyle(persona.name)}
+              aria-pressed={seated}
+              aria-describedby={locked ? "party-hint" : undefined}
+              data-refused={refusedWelcomeSeat === persona.name}
+              onClick={() => flipWelcomeSeat(persona.name)}
+              title={
+                locked
+                  ? `${persona.name} is the last one in. Seat someone else first.`
+                  : `${persona.name}, ${PERSONA_META[persona.name]?.archetype ?? persona.role}. ${seated ? "Click to unseat." : "Click to seat."}`
+              }
+            >
+              <PixelAvatar name={persona.name} compact />
+              <span>{persona.name}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="party-hint" id="party-hint" data-alert={Boolean(refusedWelcomeSeat)} role="status" aria-live="polite">
+        {refusedWelcomeSeat
+          ? `Someone has to stay in the room. Seat another mind before unseating ${refusedWelcomeSeat}.`
+          : selectedPersonas.length === personas.length
+            ? "The full council is seated. Tap a face to send someone out."
+            : selectedPersonas.length === 1
+              ? `${selectedPersonas[0]} is the last one in, so they can't be unseated yet.`
+              : `${selectedPersonas.length} of ${personas.length} seated. Tap a face to change who's in the room.`}
+      </p>
 
-        <div className="setup-section">
-          <div className="setup-section-heading">
-            <h2 className="setup-section-title">Choose a mode</h2>
-            <span className="microcopy">Sets the tone and pressure.</span>
-          </div>
-          <div className="mode-board setup-mode-board" aria-label="Choose a mode">
-            {MODES.map((item, index) => (
-              <button
-                key={item.name}
-                type="button"
-                className="mode-card"
-                data-active={mode === item.name}
-                aria-pressed={mode === item.name}
-                onClick={() => setMode(item.name)}
-              >
-                <span className="mode-number">0{index + 1}</span>
-                <h2>{item.name}</h2>
-                <p>{item.description}</p>
-                <strong>{item.intent}</strong>
-                <span>{item.ritual}</span>
-              </button>
+      <h1 className="welcome-title" id="welcome-title">
+        What should the council look at?
+      </h1>
+
+      <div className="welcome-pressure">
+        <PressureControl variant="dial" mode={mode} onChange={setMode} />
+      </div>
+
+      {renderComposer()}
+
+      <div className="starter-grid">
+        {starters.map((text) => (
+          <button key={text} type="button" className="starter" onClick={() => applyStarter(text)}>
+            {text}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+
+  const renderCouncilPanel = () => (
+    <CouncilPanel
+      Avatar={PixelAvatar}
+      personas={personas}
+      selectedPersonas={selectedPersonas}
+      togglePersona={togglePersona}
+      activePersona={activePersona}
+      askEveryone={askEveryone}
+      askTargets={askTargets}
+      pickSpeaker={pickSpeaker}
+      speakingNow={speakingNow}
+      roundQueue={roundQueue}
+      isSending={isSending}
+      feed={feed}
+      mode={mode}
+      modeControl={<PressureControl variant="panel" mode={mode} onChange={setMode} />}
+      stateOf={personaState}
+      canExport={Boolean(session)}
+      onExport={(format) => void handleExport(format)}
+      isExporting={isExporting}
+      exportStatus={exportStatus}
+      rosterOffline={personaStatus === "error"}
+      isOpen={isCouncilOpen}
+      onClose={() => setIsCouncilOpen(false)}
+    />
+  );
+
+  const renderRoom = () => (
+    <main className="room" data-fresh={isFreshRoom}>
+      <header className="room-bar">
+        <button
+          type="button"
+          className="icon-button menu-button"
+          onClick={() => setIsDrawerOpen(true)}
+          aria-label="Open past councils"
+          aria-expanded={isDrawerOpen}
+        >
+          <span className="burger" aria-hidden="true" />
+        </button>
+        <h1 className="room-title">{session?.title ?? PLACEHOLDER_TITLE}</h1>
+        {!isFreshRoom && <PressureControl variant="compact" mode={mode} onChange={setMode} />}
+        {!isFreshRoom && (
+        <button
+          type="button"
+          className="council-button"
+          onClick={() => setIsCouncilOpen(true)}
+          aria-expanded={isCouncilOpen}
+          aria-label="Open council panel"
+        >
+          <span className="council-faces" aria-hidden="true">
+            {selectedPersonas.slice(0, 5).map((name) => (
+              <span key={name} style={personaStyle(name)}>
+                <PixelAvatar name={name} compact />
+              </span>
             ))}
-          </div>
-        </div>
-      </section>
+          </span>
+        </button>
+        )}
+      </header>
+      {!isFreshRoom && <PressureStrip mode={mode} />}
 
-      <section className="setup-panel">
-        <div className="setup-section-heading">
-          <h2 className="setup-section-title">Invite personas</h2>
-          <span className="microcopy">{selectedPersonas.length} invited</span>
-        </div>
-        <div className="persona-deck setup-persona-deck">
-          {personas.map((persona) => {
-            const meta = PERSONA_META[persona.name];
-            const selected = selectedPersonas.includes(persona.name);
+      <p className="sr-only" role="status" aria-live="polite">
+        {statusMessage}
+      </p>
+
+      <div className="feed" ref={feedScrollRef}>
+        <div className="feed-inner">
+          {isFreshRoom && renderWelcome()}
+          {!isFreshRoom && feed.length === 0 && (
+            <div className="empty-feed">
+              <p>The floor is open. Ask something with real stakes, or start from one of these:</p>
+              <div className="starter-grid">
+                {starters.map((text) => (
+                  <button key={text} type="button" className="starter" onClick={() => applyStarter(text)}>
+                    {text}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {feed.map((entry) => {
+            const isUser = entry.speaker === "User";
+            const streaming = isSending && entry.id === lastFeedId;
+            if (isUser) {
+              return (
+                <article key={entry.id} className="turn turn-user">
+                  <p>{entry.content}</p>
+                </article>
+              );
+            }
             return (
-              <article key={persona.name} className="persona-card" data-selected={selected}>
-                <div className="persona-card-top">
-                  <PixelAvatar name={persona.name} />
-                  <div>
-                    <span className="persona-stat">{meta?.stat ?? persona.role}</span>
-                    <h2>{persona.name}</h2>
-                    <p>{meta?.archetype ?? persona.role}</p>
-                  </div>
-                </div>
-                <p className="persona-quote">{meta?.quote ?? persona.tagline}</p>
-                <div className="persona-details">
-                  <span>{meta?.species ?? persona.role}</span>
-                  <span>{persona.focus}</span>
-                  <span>{meta?.signal ?? persona.tagline}</span>
-                </div>
-                <div className="persona-actions">
-                  <button
-                    type="button"
-                    className="pixel-button-alt"
-                    aria-pressed={selected}
-                    onClick={() => togglePersona(persona.name)}
-                  >
-                    {selected ? "Dismiss" : "Invite"}
-                  </button>
-                  <button
-                    type="button"
-                    className="pixel-button-alt"
-                    aria-pressed={activePersona === persona.name}
-                    onClick={() => setActivePersona(persona.name)}
-                  >
-                    {activePersona === persona.name ? "Speaking" : "Make Speaker"}
-                  </button>
+              <article
+                key={entry.id}
+                className="turn"
+                style={personaStyle(entry.speaker)}
+                data-streaming={streaming}
+              >
+                <span className="turn-face" aria-hidden="true">
+                  <PixelAvatar name={entry.speaker} compact talking={streaming && speakingNow === entry.speaker} />
+                </span>
+                <div className="turn-body">
+                  <header>
+                    <strong>{entry.speaker}</strong>
+                    <time>{entry.time}</time>
+                  </header>
+                  <p>
+                    {entry.content ? normalizePersonaText(entry.content) : <span className="thinking">thinking</span>}
+                  </p>
                 </div>
               </article>
             );
           })}
         </div>
-      </section>
-
-      <section className="setup-actions">
-        <div className="setup-summary" aria-label="Session summary">
-          <span className="status-chip">Mode: {mode}</span>
-          <span className="status-chip">Speaker: {activePersona}</span>
-          <span className="status-chip">Roster: {selectedPersonas.length} minds</span>
-        </div>
-        <button
-          type="button"
-          className="pixel-button"
-          onClick={handleLaunch}
-          disabled={isLaunching}
-        >
-          {isLaunching ? "Booting..." : "Launch Room"}
-        </button>
-        <button type="button" className="pixel-button-alt" onClick={() => goToPage("war-room")}>Skip to War Room</button>
-      </section>
-    </main>
-  );
-
-  const renderWarRoom = () => (
-    <main className="app-page war-grid">
-      <section className="room-stage">
-        <div className="stage-header">
-          <div>
-            <PageKicker label="Live council chamber" value={mode} />
-            <h1 className="page-title">War Room</h1>
-            <div className="room-status-row">
-              <span className="status-chip">Session: {session?.title ?? (sessionTitle.trim() || "Untitled")}</span>
-              <span className="status-chip">Speaker: {activePersona}</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="pixel-button"
-            onClick={handleLaunch}
-            disabled={isLaunching}
-          >
-            {isLaunching ? "Booting..." : session ? "New Session" : "Launch Room"}
+        {hasNewFeed && (
+          <button type="button" className="jump-latest" onClick={() => scrollFeedToBottom("smooth")}>
+            New replies below
           </button>
-        </div>
-
-        <div className="video-grid" aria-label="Persona room">
-          {selectedPersonaObjects.map((persona) => (
-            <button
-              key={persona.name}
-              type="button"
-              className="persona-monitor"
-              data-speaking={activePersona === persona.name}
-              aria-pressed={activePersona === persona.name}
-              aria-label={`Set ${persona.name} as speaker`}
-              onClick={() => setActivePersona(persona.name)}
-            >
-              <PixelAvatar name={persona.name} />
-              <span className="monitor-name">{persona.name}</span>
-              <span className="monitor-role">{PERSONA_META[persona.name]?.species ?? persona.role}</span>
-            </button>
-          ))}
-          <button type="button" className="persona-monitor add-monitor" onClick={() => goToPage("personas")}>
-            <span className="add-glyph">+</span>
-            <span className="monitor-name">Invite Mind</span>
-            <span className="monitor-role">Open persona deck</span>
-          </button>
-        </div>
-
-        <div className="feed-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Council Feed</h2>
-              <p>{session ? `Session ${session.id.slice(0, 8)}` : "Launch a room to begin."}</p>
-            </div>
-            <div className="panel-actions">
-              <span className="status-chip" role="status" aria-live="polite">{statusMessage}</span>
-              {hasNewFeed && (
-                <button
-                  type="button"
-                  className="pixel-button-alt jump-latest"
-                  onClick={() => scrollFeedToBottom("smooth")}
-                >
-                  Jump to latest
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="debate-scroll" ref={feedScrollRef}>
-            {feed.length === 0 && (
-              <div className="empty-feed">
-                <strong>No turns yet.</strong>
-                <span>Start with one specific problem. The room gets sharper when the prompt has stakes.</span>
-              </div>
-            )}
-            {feed.map((entry) => (
-              <article key={entry.id} className="debate-turn" data-user={entry.speaker === "User"}>
-                <div className="turn-meta">
-                  <span>{entry.speaker}</span>
-                  <time>{entry.time}</time>
-                </div>
-                <p>
-                  {entry.content
-                    ? entry.speaker === "User"
-                      ? entry.content
-                      : normalizePersonaText(entry.content)
-                    : "Receiving signal..."}
-                </p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <aside className="control-stack">
-        <section className="control-card hot-card">
-          <h2>Turn Console</h2>
-          <p className="microcopy">One human prompt. One active mind. Change the speaker any time.</p>
-          <label className="field-label" htmlFor="active-speaker">
-            Active Speaker
-          </label>
-          <select
-            id="active-speaker"
-            className="pixel-select"
-            value={activePersona}
-            onChange={(event) => setActivePersona(event.target.value)}
-          >
-            {selectedPersonas.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <label className="field-label" htmlFor="council-prompt">
-            Prompt
-          </label>
-          <textarea
-            id="council-prompt"
-            className="pixel-textarea command-input"
-            placeholder="What are we deciding, building, naming, testing, or killing?"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-          <button
-            type="button"
-            className="pixel-button full-button"
-            onClick={handleSend}
-            disabled={isSending}
-          >
-            {isSending ? "Streaming..." : "Send to Council"}
-          </button>
-          <div className="focus-strip">Focus: {activePersonaData?.focus ?? "Select a persona."}</div>
-        </section>
-
-        <section className="control-card">
-          <h2>Context Cargo</h2>
-          <p className="microcopy">Attach source material when the council needs evidence, not vibes.</p>
-          <label className="field-label" htmlFor="artifact-upload">
-            Artifact file
-          </label>
-          <input
-            id="artifact-upload"
-            className="pixel-input"
-            type="file"
-            accept=".pdf,.txt,.md"
-            onChange={(event) => setArtifactFile(event.target.files?.[0] ?? null)}
-          />
-          {artifactFile && (
-            <div className="file-row">
-              <span>{artifactFile.name} ({Math.round(artifactFile.size / 1024)} KB)</span>
-              <button
-                type="button"
-                className="pixel-button-alt"
-                onClick={() => setArtifactFile(null)}
-              >
-                Remove
-              </button>
-            </div>
-          )}
-          <div className="inline-actions">
-            <button
-              type="button"
-              className="pixel-button-alt"
-              onClick={handleUpload}
-              disabled={!artifactFile}
-            >
-              Upload
-            </button>
-            <span>PDF, TXT, MD. Max 5MB.</span>
-          </div>
-          {artifactStatus && (
-            <p className="status-line" role="status" aria-live="polite">
-              {artifactStatus}
-            </p>
-          )}
-        </section>
-
-        <section className="control-card">
-          <h2>Extract</h2>
-          <p className="microcopy">Save the session when the debate creates a useful artifact.</p>
-          <div className="inline-actions">
-            <button type="button" className="pixel-button-alt" onClick={() => handleExport("md")} disabled={isExporting}>
-              Markdown
-            </button>
-            <button type="button" className="pixel-button-alt" onClick={() => handleExport("pdf")} disabled={isExporting}>
-              PDF
-            </button>
-          </div>
-          {exportStatus && (
-            <p className="status-line" role="status" aria-live="polite">
-              {exportStatus}
-            </p>
-          )}
-        </section>
-      </aside>
-    </main>
-  );
-
-  const renderPersonas = () => (
-    <main className="app-page">
-      <PageKicker label="Persona deck" value={`${selectedPersonas.length} invited`} />
-      <div className="page-split-heading">
-        <div>
-          <h1 className="page-title">Assemble the Council</h1>
-          <p className="page-copy">Each persona is a cognitive job, not decoration. Select the minds that create the right kind of useful tension.</p>
-        </div>
-        <button type="button" className="pixel-button" onClick={() => goToPage("war-room")}>
-          Enter Room
-        </button>
-      </div>
-      <section className="persona-deck">
-        {personas.map((persona) => {
-          const meta = PERSONA_META[persona.name];
-          const selected = selectedPersonas.includes(persona.name);
-          return (
-            <article key={persona.name} className="persona-card" data-selected={selected}>
-              <div className="persona-card-top">
-                <PixelAvatar name={persona.name} />
-                <div>
-                  <span className="persona-stat">{meta?.stat ?? persona.role}</span>
-                  <h2>{persona.name}</h2>
-                  <p>{meta?.archetype ?? persona.role}</p>
-                </div>
-              </div>
-              <p className="persona-quote">{meta?.quote ?? persona.tagline}</p>
-              <div className="persona-details">
-                <span>{meta?.species ?? persona.role}</span>
-                <span>{persona.focus}</span>
-                <span>{meta?.signal ?? persona.tagline}</span>
-              </div>
-              <div className="persona-actions">
-                <button
-                  type="button"
-                  className="pixel-button-alt"
-                  aria-pressed={selected}
-                  onClick={() => togglePersona(persona.name)}
-                >
-                  {selected ? "Dismiss" : "Invite"}
-                </button>
-                <button
-                  type="button"
-                  className="pixel-button-alt"
-                  aria-pressed={activePersona === persona.name}
-                  onClick={() => setActivePersona(persona.name)}
-                >
-                  {activePersona === persona.name ? "Speaking" : "Make Speaker"}
-                </button>
-              </div>
-            </article>
-          );
-        })}
-      </section>
-    </main>
-  );
-
-  const renderModes = () => (
-    <main className="app-page">
-      <PageKicker label="Pressure selector" value={mode} />
-      <div className="page-split-heading">
-        <div>
-          <h1 className="page-title">Choose the Room's Temperament</h1>
-          <p className="page-copy">Modes should change behavior, not labels. Pick the emotional and intellectual pressure your idea needs right now.</p>
-        </div>
-        <button type="button" className="pixel-button" onClick={() => goToPage("war-room")}>
-          Apply in Room
-        </button>
-      </div>
-      <section className="mode-board">
-        {MODES.map((item, index) => (
-          <button
-            key={item.name}
-            type="button"
-            className="mode-card"
-            data-active={mode === item.name}
-            aria-pressed={mode === item.name}
-            onClick={() => setMode(item.name)}
-          >
-            <span className="mode-number">0{index + 1}</span>
-            <h2>{item.name}</h2>
-            <p>{item.description}</p>
-            <strong>{item.intent}</strong>
-            <span>{item.ritual}</span>
-          </button>
-        ))}
-      </section>
-      <section className="mode-note">
-        <h2>Current protocol: {activeMode.name}</h2>
-        <p>{activeMode.intent}</p>
-      </section>
-    </main>
-  );
-
-  const renderVault = () => (
-    <main className="app-page">
-      <PageKicker label="Session vault" value={sessionsStatus || `${sessions.length} saved`} />
-      <div className="page-split-heading">
-        <div>
-          <h1 className="page-title">Reload Past Thinking</h1>
-          <p className="page-copy">The vault keeps sessions separate from the live room so old work does not clutter new thinking.</p>
-        </div>
-        <button type="button" className="pixel-button-alt" onClick={() => void refreshSessions()}>
-          Refresh Vault
-        </button>
-      </div>
-      <section className="vault-grid">
-        {sessions.length === 0 && (
-          <article className="vault-card empty-vault">
-            <h2>No saved sessions yet.</h2>
-            <p>Launch a council and send a prompt. Saved cloud sessions will appear here.</p>
-            <button type="button" className="pixel-button" onClick={handleLaunch} disabled={isLaunching}>
-              Launch First Session
-            </button>
-          </article>
         )}
-        {sessions.map((item) => (
-          <article key={item.id} className="vault-card" data-current={session?.id === item.id}>
-            <span className="vault-mode">{item.mode ?? "Council"}</span>
-            <h2>{item.title ?? "Untitled Council"}</h2>
-            <p>Created {formatSessionTime(item.createdAt)}</p>
-            <button type="button" className="pixel-button-alt" onClick={() => handleLoadSession(item)}>
-              Load Into War Room
-            </button>
-          </article>
-        ))}
-      </section>
-    </main>
-  );
+      </div>
 
-  const renderGuide = () => (
-    <main className="app-page guide-grid">
-      <section>
-        <PageKicker label="Human-centered flow" value="No maze" />
-        <h1 className="page-title">How to Use the Council Without Fighting the UI</h1>
-        <p className="page-copy">The interface now separates the mental jobs: learn on Home, configure Personas and Modes, work in War Room, recover work in Vault.</p>
-        <div className="guide-steps">
-          <article>
-            <span>1</span>
-            <h2>Start with stakes.</h2>
-            <p>Write the decision, idea, or artifact in plain language. The council performs better when it knows what success and failure mean.</p>
-          </article>
-          <article>
-            <span>2</span>
-            <h2>Invite opposing minds.</h2>
-            <p>Pair Devil with Tyson for ambition under attack, or Bison with Bucks when execution and business model need to agree.</p>
-          </article>
-          <article>
-            <span>3</span>
-            <h2>Change the speaker deliberately.</h2>
-            <p>Do not ask every persona the same vague thing. Ask each mind for its natural contribution.</p>
-          </article>
-          <article>
-            <span>4</span>
-            <h2>Export only after synthesis.</h2>
-            <p>The value is not the transcript. The value is the decision, angle, pivot, or next action that emerges.</p>
-          </article>
-        </div>
-      </section>
-
-      <aside className="auth-console">
-        <h2>Access Console</h2>
-        <p>Cloud sessions are secured by Supabase Auth.</p>
-        <div className="access-readout">
-          <span>Session</span>
-          <strong>{session ? "Active" : "Idle"}</strong>
-          <span>Access</span>
-          <strong>{authIdentity}</strong>
-          <span>Persona API</span>
-          <strong>{personaStatusLabel}</strong>
-        </div>
-        <div className="auth-actions">
-          <p className="status-line" role="status" aria-live="polite">
-            Access: {authStatus}
-          </p>
-          <button type="button" className="pixel-button-alt" onClick={handleSignOut}>
-            Sign Out
-          </button>
-        </div>
-        {authMessage && <p className="status-line">{authMessage}</p>}
-      </aside>
+      {!isFreshRoom && (
+        <footer className="dock">
+          {visibleNotice && (
+            <p className="notice" role="alert">
+              {visibleNotice}
+            </p>
+          )}
+          {renderComposer()}
+        </footer>
+      )}
+      {isFreshRoom && visibleNotice && (
+        <p className="notice notice-floating" role="alert">
+          {visibleNotice}
+        </p>
+      )}
     </main>
   );
 
@@ -1821,11 +1535,20 @@ export default function App() {
     <main className="auth-gate">
       <section className="auth-gate-shell">
         <article className="auth-gate-hero">
-          <PageKicker label="Secure council access" value="Supabase Auth" />
-          <h1 className="page-title">Sign in to enter Think Tank</h1>
+          <button type="button" className="text-button back-home" onClick={goHome}>
+            Back to home
+          </button>
+          <h1 className="page-title">Sign in to open your councils.</h1>
           <p className="page-copy">
-            Sessions, artifacts, and exports are tied to your account. Login is required.
+            Your councils, uploads and exports are saved to your account, so you can pick up any argument where it stopped.
           </p>
+          <div className="gate-party" aria-hidden="true">
+            {FALLBACK_PERSONAS.map((persona) => (
+              <span key={persona.name} style={personaStyle(persona.name)}>
+                <PixelAvatar name={persona.name} compact />
+              </span>
+            ))}
+          </div>
         </article>
 
         <article className="auth-gate-panel">
@@ -1969,67 +1692,43 @@ export default function App() {
     </main>
   );
 
-  const renderActivePage = () => {
-    switch (activePage) {
-      case "setup":
-        return renderSetup();
-      case "war-room":
-        return renderWarRoom();
-      case "personas":
-        return renderPersonas();
-      case "modes":
-        return renderModes();
-      case "vault":
-        return renderVault();
-      case "guide":
-        return renderGuide();
-      default:
-        return renderHome();
-    }
-  };
+  if (view === "home") {
+    return <Home onStart={openApp} isSignedIn={isSignedIn || !requiresAuth} />;
+  }
 
   if (requiresAuth && !isSignedIn) {
-    return <div className="min-h-screen app-shell">{renderAuthGate()}</div>;
+    return (
+      <div className="gate-shell">
+        {renderAuthGate()}
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen app-shell">
-      <header className="site-header">
-        <div className="brand-lockup" role="banner">
-          <button type="button" className="brand-mark" onClick={() => goToPage("home")} aria-label="Go home">
-            <span />
-          </button>
-          <div>
-            <p>AI Council</p>
-            <span>Think Tank Protocol</span>
-          </div>
-        </div>
-        <nav className="page-nav" aria-label="Primary navigation">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.page}
-              type="button"
-              className="nav-link"
-              data-current={activePage === item.page}
-              aria-current={activePage === item.page ? "page" : undefined}
-              onClick={() => goToPage(item.page)}
-            >
-              <span>{item.label}</span>
-              <small>{item.helper}</small>
-            </button>
-          ))}
-        </nav>
-        <button type="button" className="pixel-button header-cta" onClick={() => void handleHeaderCta()}>
-          {session ? "Enter Room" : "Start"}
-        </button>
-      </header>
-
-      {renderActivePage()}
-
-      <footer className="site-footer">
-        <span>Think Tank Protocol v0.1</span>
-        <span>{statusMessage}</span>
-      </footer>
+    <div className="app-shell" data-fresh={isFreshRoom} data-sidebar-collapsed={sidebarCollapsed}>
+      <Sidebar
+        sessions={sessions}
+        sessionsStatus={sessionsStatus}
+        currentId={session?.id ?? null}
+        busy={isSending || isLaunching}
+        isOpen={isDrawerOpen}
+        collapsed={sidebarCollapsed}
+        requiresAuth={requiresAuth}
+        identity={authIdentity}
+        onClose={() => setIsDrawerOpen(false)}
+        onToggleCollapsed={toggleSidebarCollapsed}
+        onHome={() => {
+          setIsDrawerOpen(false);
+          goHome();
+        }}
+        onNewCouncil={startNewCouncil}
+        onOpen={(item) => void handleLoadSession(item)}
+        onRefresh={() => void refreshSessions()}
+        onRename={handleRenameCouncil}
+        onSignOut={() => void handleSignOut()}
+      />
+      {renderRoom()}
+      {!isFreshRoom && renderCouncilPanel()}
     </div>
   );
 }

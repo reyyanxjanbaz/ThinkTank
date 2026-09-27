@@ -3,14 +3,16 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        base: "#120F0A",
-        panel: "#1F281A",
-        border: "#665F3A",
-        ink: "#FFF1C7",
-        cyan: "#7CFF6B",
-        coral: "#FF6A38",
-        yellow: "#FFD15C",
-        mint: "#8DF7C4"
+        night: "#111338",
+        window: "#1B2073",
+        inset: "#10134A",
+        edge: "#07082A",
+        frame: "#ECEAFF",
+        devil: "#FF5A5F",
+        tyson: "#FF9B3D",
+        bison: "#D9A36A",
+        anshu: "#6FE3C1",
+        bucks: "#F7D046"
       }
     }
   },

@@ -154,6 +154,26 @@ export const createSession = async (input: CreateSessionInput) => {
   return mapSession(data);
 };
 
+export const updateSessionTitle = async (id: string, title: string, userId?: string) => {
+  if (!userId) {
+    throw new Error("Missing userId");
+  }
+  const client = ensureClient();
+  const { data, error } = await client
+    .from("sessions")
+    .update({ title, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select("id,title,mode,status,created_at,updated_at")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data ? mapSession(data) : null;
+};
+
 export const listTurns = async (sessionId: string) => {
   const client = ensureClient();
   const { data, error } = await client
