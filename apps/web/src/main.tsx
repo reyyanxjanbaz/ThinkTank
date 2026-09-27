@@ -5,6 +5,7 @@ import App from "./App";
 import PwaStatus from "./PwaStatus";
 import { registerServiceWorker, trackVisualViewport } from "./lib/pwa";
 import "./styles.css";
+import "./decor.css";
 import "./pwa.css";
 
 const queryClient = new QueryClient({

@@ -1,0 +1,299 @@
+/*
+  Decor: "the council chamber at night".
+  - Outside the room (rails, home, sign-in) is a night sky: tiny star tiles of co-prime sizes
+    (97, 151 and 409px), so the repeat never visibly lines up. The one sparkle tile stays off
+    the rails, where it would sit next to text and read as a glyph.
+  - The room is a lit stone floor: a barely-there checker with a pixel stud at each corner.
+    It is lit from above by the pressure (banded like an SNES gradient, brighter per level) and
+    from below by the colour of whoever holds the floor.
+  - Motion is one language: short, pixel-stepped (steps()), transform and opacity only, and it
+    plays once. Nothing loops, nothing blinks.
+  Every layer here is paint-once CSS: no images fetched, no scripts, no hit areas.
+*/
+
+:root {
+  --stars:
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='97' height='97' fill='%23b9b8f0' shape-rendering='crispEdges'><path opacity='.3' d='M5 12h1v1H5zM67 66h1v1h-1zM23 90h1v1h-1z'/><path opacity='.55' d='M20 40h1v1h-1zM51 80h1v1h-1zM77 22h1v1h-1z'/><path opacity='.8' d='M40 60h1v1h-1zM88 5h1v1h-1z'/></svg>"),
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='151' height='151' fill='%23eceaff' shape-rendering='crispEdges'><path opacity='.45' d='M120 18h2v2h-2zM12 140h2v2h-2zM90 75h2v2h-2z'/></svg>");
+  --sparkle: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='409' height='409' fill='%23eceaff' opacity='.5' shape-rendering='crispEdges'><path d='M60 180h1v5h-1zM58 182h5v1h-5zM331 331h1v5h-1zM329 333h5v1h-5zM214 52h1v3h-1zM213 53h3v1h-3zM137 297h1v3h-1zM136 298h3v1h-3z'/></svg>");
+  --floor:
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' fill='%238e90d8' opacity='.13' shape-rendering='crispEdges'><path d='M0 0h2v2H0z'/></svg>") -1px -1px / 48px 48px,
+    repeating-conic-gradient(rgba(142, 144, 216, 0.018) 0 25%, transparent 0 50%) 0 0 / 96px 96px;
+}
+
+/* ---------- Night sky: everywhere outside the room ---------- */
+
+body {
+  background: var(--sparkle), var(--stars), var(--bg);
+}
+
+/* A phone has no open sky: a sparkle there always lands beside a line of text. */
+@media (max-width: 640px) {
+  body {
+    background: var(--stars), var(--bg);
+  }
+}
+
+.sidebar {
+  background:
+    linear-gradient(transparent 20%, var(--rail) 88%),
+    var(--stars),
+    var(--rail);
+}
+
+.council {
+  background:
+    linear-gradient(transparent 30%, var(--rail) 90%),
+    var(--stars),
+    var(--rail);
+}
+
+/* The pressure pools at the foot of the council panel, a little more per level. */
+.app-shell[data-heat] .council {
+  background:
+    radial-gradient(120% 150px at 50% 100%, color-mix(in srgb, var(--room-heat) var(--pool, 4%), transparent) 0 55%, transparent 0),
+    radial-gradient(150% 240px at 50% 100%, color-mix(in srgb, var(--room-heat) calc(var(--pool, 4%) / 2), transparent) 0 55%, transparent 0),
+    linear-gradient(transparent 30%, var(--rail) 90%),
+    var(--stars),
+    var(--rail);
+}
+
+.app-shell[data-heat="2"] { --pool: 5%; }
+.app-shell[data-heat="3"] { --pool: 6.5%; }
+.app-shell[data-heat="4"] { --pool: 8%; }
+
+/* ---------- The room: a lit floor ---------- */
+
+.room {
+  isolation: isolate;
+}
+
+.room-decor,
+.room-aura {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.room-decor {
+  background:
+    radial-gradient(ellipse 75% 70% at 50% 45%, transparent 60%, rgba(7, 8, 42, 0.5)),
+    var(--floor),
+    var(--bg);
+}
+
+/* Heat from above: three hard bands, no smooth airbrush, like an SNES palette gradient. */
+.room-decor::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(55% 90px at 50% 0, color-mix(in srgb, var(--room-heat, #6fe3c1) 8%, transparent) 0 70%, transparent 0),
+    radial-gradient(75% 170px at 50% 0, color-mix(in srgb, var(--room-heat, #6fe3c1) 5%, transparent) 0 70%, transparent 0),
+    radial-gradient(100% 270px at 50% 0, color-mix(in srgb, var(--room-heat, #6fe3c1) 2.5%, transparent) 0 70%, transparent 0);
+  opacity: 0.35;
+  animation: heat-1 320ms steps(4, end) backwards;
+}
+
+/* A new pressure re-lights the room: each level has its own (identical) keyframes, so a change
+   of level restarts the fade-in. */
+.app-shell[data-heat="2"] .room-decor::before { opacity: 0.5; animation-name: heat-2; }
+.app-shell[data-heat="3"] .room-decor::before { opacity: 0.65; animation-name: heat-3; }
+.app-shell[data-heat="4"] .room-decor::before { opacity: 0.8; animation-name: heat-4; }
+
+@keyframes heat-1 { from { opacity: 0; } }
+@keyframes heat-2 { from { opacity: 0; } }
+@keyframes heat-3 { from { opacity: 0; } }
+@keyframes heat-4 { from { opacity: 0; } }
+
+/* The speaker's light, rising from the dock. Fades in per voice, out when the round ends. */
+.room-aura {
+  background:
+    radial-gradient(60% 230px at 50% 100%, color-mix(in srgb, var(--persona) 7.5%, transparent) 0 70%, transparent 0),
+    radial-gradient(85% 380px at 50% 100%, color-mix(in srgb, var(--persona) 4%, transparent) 0 70%, transparent 0);
+  opacity: 0;
+  transition: opacity 480ms steps(4, end);
+}
+
+.room-aura[data-on="true"] {
+  opacity: 1;
+  animation: fade-in 320ms steps(4, end) backwards;
+}
+
+/* The home demo is a small copy of the room, so it stands on the same floor. */
+.demo-body {
+  background: var(--floor);
+}
+
+/* ---------- Home and sign-in ---------- */
+
+/* Soft, unbanded light here: bands are reserved for things that mean something (heat, voice). */
+.home {
+  background: radial-gradient(34% 30% at 72% 34%, rgba(111, 227, 193, 0.045), transparent) no-repeat;
+  background-size: 100% 1100px;
+}
+
+.gate-shell {
+  background: radial-gradient(34% 44% at 72% 50%, rgba(142, 144, 216, 0.07), transparent);
+}
+
+@media (max-width: 1023px) {
+  .gate-shell {
+    background: radial-gradient(75% 34% at 50% 72%, rgba(142, 144, 216, 0.07), transparent);
+  }
+}
+
+/* ---------- Motion: one language, pixel-stepped, played once ---------- */
+
+/* Screens fade in from black in four steps, like an SNES scene change. Opacity only, so the
+   fixed drawers inside keep their containing block. */
+.home,
+.gate-shell,
+.app-shell {
+  animation: fade-in 240ms steps(4, end) backwards;
+}
+
+/* A new reply opens like an SNES text box: a thin bar that steps open. Only the newest entry
+   plays, so opening a saved council doesn't squash the whole transcript at once. */
+.feed-inner > .dlg:last-child {
+  animation: dlg-open 200ms steps(4, end) backwards;
+}
+
+/* Your line slides up out of the composer. The reply placeholder lands right behind it, so it
+   may already be second to last when the slide is still playing. */
+.feed-inner > .turn-user:nth-last-child(-n + 2) p {
+  animation: send-in 180ms steps(3, end) backwards;
+}
+
+/* A save slot writes in: new councils, pinned councils moving up, a list that loads. */
+.sb-row {
+  animation: slot-in 180ms steps(3, end) backwards;
+}
+
+/* Drawers' shade steps in with the drawer. */
+.scrim-left,
+.scrim-right {
+  animation: fade-in 160ms steps(4, end) backwards;
+}
+
+/* Picking a pressure stop gives it a small press. */
+.pressure-stop[aria-checked="true"] {
+  animation: stop-pick 180ms steps(3, end);
+}
+
+.jump-latest {
+  animation: send-in 160ms steps(3, end) backwards;
+}
+
+/* Buttons press down a pixel or two. Instant, like a controller button. */
+.ghost-button:active:not(:disabled),
+.pixel-button:active:not(:disabled),
+.pixel-button-alt:active:not(:disabled),
+.btn-secondary:active,
+.icon-button:active,
+.sb-icon:active,
+.sb-state-button:active,
+.sb-menu-format:active:not(:disabled),
+.sb-confirm-cancel:active:not(:disabled),
+.sb-confirm-delete:active:not(:disabled),
+.starter:active,
+.pressure-stop:active,
+.pressure-trigger:active,
+.sheet-ask:active:not(:disabled),
+.speaker-chip:active:not(:disabled),
+.seat-chip-ask:active,
+.demo-control:active {
+  transform: translateY(1px);
+}
+
+.pixel-button:active:not(:disabled) {
+  box-shadow: none;
+}
+
+/* The main buttons catch a two-band pixel glint once as the pointer arrives. */
+@media (hover: hover) {
+  .btn-primary,
+  .send-button,
+  .pixel-button,
+  .sb-new {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-primary::after,
+  .send-button::after,
+  .pixel-button::after,
+  .sb-new::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(255, 255, 255, 0.4) 0 47%,
+      rgba(255, 255, 255, 0.18) 0 53%,
+      transparent 0
+    );
+    opacity: 0;
+    transform: translateX(-100%);
+    pointer-events: none;
+  }
+
+  .btn-primary:hover::after,
+  .send-button:hover:not(:disabled)::after,
+  .pixel-button:hover:not(:disabled)::after,
+  .sb-new:hover:not([aria-disabled="true"])::after {
+    animation: glint 300ms steps(6, end);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes dlg-open {
+  from { opacity: 0.5; transform: scaleY(0.08); }
+}
+
+@keyframes send-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+@keyframes slot-in {
+  from { opacity: 0; transform: translateX(-6px); }
+}
+
+@keyframes stop-pick {
+  from { transform: scale(0.95); }
+}
+
+@keyframes glint {
+  from { opacity: 1; transform: translateX(-100%); }
+  to { opacity: 1; transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home,
+  .gate-shell,
+  .app-shell,
+  .feed-inner > .dlg:last-child,
+  .feed-inner > .turn-user:nth-last-child(-n + 2) p,
+  .sb-row,
+  .scrim-left,
+  .scrim-right,
+  .pressure-stop[aria-checked="true"],
+  .jump-latest,
+  .app-shell[data-heat] .room-decor::before,
+  .room-aura[data-on="true"],
+  .btn-primary:hover::after,
+  .send-button:hover::after,
+  .pixel-button:hover::after,
+  .sb-new:hover::after {
+    animation: none;
+  }
+
+  .room-aura {
+    transition: none;
+  }
+}

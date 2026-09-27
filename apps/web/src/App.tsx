@@ -24,6 +24,7 @@ import { HeatBars, PRESSURE, PressureControl, PressureStrip, pressureFor } from 
 import Home from "./Home";
 import CouncilPanel from "./CouncilPanel";
 import Composer from "./Composer";
+import { RoomDecor } from "./Decor";
 import { commandForMode, parsePrompt } from "./lib/tokens";
 import {
   FALLBACK_PERSONAS,
@@ -1405,6 +1406,7 @@ export default function App() {
 
   const renderRoom = () => (
     <main className="room" data-fresh={isFreshRoom}>
+      <RoomDecor speaker={speakingNow} />
       <header className="room-bar">
         <button
           type="button"
@@ -1681,7 +1683,13 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell" data-fresh={isFreshRoom} data-sidebar-collapsed={sidebarCollapsed}>
+    <div
+      className="app-shell"
+      data-fresh={isFreshRoom}
+      data-sidebar-collapsed={sidebarCollapsed}
+      data-heat={pressureFor(mode).level}
+      style={{ "--room-heat": pressureFor(mode).heat } as CSSProperties}
+    >
       <Sidebar
         sessions={sessions}
         sessionsStatus={sessionsStatus}
