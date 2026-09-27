@@ -5,7 +5,7 @@ services:
     name: thinktank-api
     runtime: node
     rootDir: apps/api
-    plan: starter
+    plan: free
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start
     healthCheckPath: /health
