@@ -1463,11 +1463,11 @@ export default function App() {
                 data-streaming={streaming}
                 aria-label={`${entry.speaker}, ${entry.time}`}
               >
+                <span className="dlg-face" aria-hidden="true">
+                  <PixelAvatar name={entry.speaker} compact talking={streaming && speakingNow === entry.speaker} />
+                </span>
                 <header className="dlg-plate">
                   <strong>{entry.speaker}</strong>
-                  <span className="dlg-face" aria-hidden="true">
-                    <PixelAvatar name={entry.speaker} compact talking={streaming && speakingNow === entry.speaker} />
-                  </span>
                   <time>{entry.time}</time>
                 </header>
                 <p className="dlg-text">

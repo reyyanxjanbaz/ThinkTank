@@ -1,15 +1,24 @@
 /* Pressure: the session mode shown as heat. --heat and --level come from the active stop. */
 
+/* The meter keeps its corner; level, name and mode sit under it; the stops stand to its right. */
 .pressure {
   --heat: #6fe3c1;
   display: grid;
-  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 16px 18px;
 }
 
 .pressure-readout {
   display: flex;
-  align-items: center;
-  gap: 18px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pressure-desc,
+.pressure-ritual {
+  grid-column: 1 / -1;
 }
 
 .gauge {
@@ -97,9 +106,9 @@
   line-height: 1;
 }
 
-.readout-text p {
-  max-width: 44ch;
-  margin-top: 6px;
+.pressure-desc {
+  max-width: 60ch;
+  text-align: left;
   color: var(--ink-2);
   font-size: 14px;
   line-height: 1.5;
@@ -148,11 +157,7 @@
 }
 
 .pressure-stops-grid .stop-text {
-  display: flex;
   flex: 1;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
 }
 
 .pressure-stop {
@@ -219,6 +224,14 @@
   font-size: 19px;
 }
 
+.pressure-panel {
+  gap: 12px 12px;
+}
+
+.pressure-panel .stop-text strong {
+  font-size: 18px;
+}
+
 /* Compact trigger + popover (room header) */
 .pressure-compact {
   position: relative;
@@ -275,12 +288,8 @@
   font-size: 32px;
 }
 
-.pressure-popover .readout-text p {
+.pressure-popover .pressure-desc {
   display: none;
-}
-
-.pressure-popover .pressure-stops-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pressure-tip {
@@ -333,7 +342,7 @@
 }
 
 @media (max-width: 640px) {
-  .pressure-readout {
+  .pressure {
     gap: 12px;
   }
 
@@ -345,12 +354,8 @@
     font-size: 32px;
   }
 
-  .pressure-stops-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   /* On a phone the dial is gauge, name and stops: the description would cost four lines. */
-  .pressure-dial .readout-text p {
+  .pressure-dial .pressure-desc {
     display: none;
   }
 

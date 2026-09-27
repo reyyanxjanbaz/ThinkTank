@@ -208,7 +208,6 @@ label,
   width: 8px;
   height: 8px;
   background: var(--alert);
-  animation: blink 1.2s steps(1, end) infinite;
 }
 
 body:has(.room-bar) .pwa-status {

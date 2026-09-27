@@ -254,10 +254,10 @@ export function PressureControl({
           </span>
           <strong className="readout-name">{stop.name}</strong>
           <span className="readout-mode">{stop.mode}</span>
-          {variant === "dial" && details && <p>{details.description}</p>}
         </div>
       </div>
-      <Stops mode={mode} onChange={onChange} layout={variant === "dial" ? "row" : "grid"} />
+      <Stops mode={mode} onChange={onChange} layout="grid" />
+      {variant === "dial" && details && <p className="pressure-desc">{details.description}</p>}
       {variant === "panel" && details && <p className="pressure-ritual">{details.ritual}</p>}
     </div>
   );

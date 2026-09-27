@@ -1,0 +1,450 @@
+/*
+  Phones. Loaded after pwa.css, so it refines the shared rules instead of rewriting them.
+  - The room reads like a native chat: a flat top bar, tight dialogue windows whose portrait
+    sits inside the text, and the composer on the bottom edge, where the thumb is.
+  - The seat chips keep their names and × but ride one scrolling row, with Everyone pinned left,
+    so the composer is one chip row tall instead of two or three.
+  - Pressure and the council panel open as bottom sheets.
+  - Short screens (landscape, keyboard up) get the same compact composer and a tighter bar.
+*/
+
+/* ---------- Compact composer + dialogue: phones and short screens ---------- */
+
+@media (max-width: 640px), (max-height: 500px) and (orientation: landscape) {
+  .composer {
+    padding: 6px;
+  }
+
+  /* One row that scrolls sideways; Everyone stays put at the left edge. */
+  .speaker-row {
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 0 14px 6px 0;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+  }
+
+  .speaker-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .speaker-chip-all {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    box-shadow: 4px 0 0 var(--window);
+  }
+
+  .seat-chip-ask,
+  .seat-chip-add,
+  .speaker-chip {
+    font-size: 19px;
+  }
+
+  .chip-face .avatar-shell {
+    width: 22px;
+    height: 22px;
+  }
+
+  .composer-box {
+    gap: 4px;
+    padding-top: 4px;
+  }
+
+  .composer-hints {
+    margin-top: 2px;
+  }
+
+  .composer-hints:has(> :only-child.hint-quiet) {
+    padding-bottom: 2px;
+  }
+
+  /* Dialogue windows: the portrait tile and nameplate stay on the top edge (styles.css);
+     a phone trims the sides and the leading so more of each reply fits. */
+  .dlg {
+    padding: 22px 12px 11px;
+  }
+
+  .feed-inner > .dlg {
+    margin-top: 28px;
+  }
+
+  .feed-inner > .dlg:first-child {
+    margin-top: 16px;
+  }
+
+  .dlg-text {
+    font-size: 16.5px;
+    line-height: 1.55;
+  }
+
+  .feed-inner > .turn-user:not(:first-child) {
+    margin-top: 22px;
+  }
+
+  .turn-user p {
+    max-width: 86%;
+    padding: 8px 12px;
+    font-size: 16.5px;
+    line-height: 1.5;
+  }
+
+  .feed-inner {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+}
+
+/* ---------- Phone ---------- */
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 12px;
+  }
+
+  /* Top bar: flat. The burger, the title, the heat, the faces; no boxes around any of them. */
+  .room-bar {
+    gap: 6px;
+    min-height: 52px;
+    padding-bottom: 6px;
+    padding-left: max(4px, env(safe-area-inset-left));
+  }
+
+  .menu-button,
+  .council-close,
+  .sb-close {
+    border-color: transparent;
+  }
+
+  .room-title {
+    font-size: 23px;
+  }
+
+  .pressure-trigger {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    border-color: transparent;
+    padding: 2px 10px;
+  }
+
+  .council-button {
+    min-height: 44px;
+    align-items: center;
+    padding: 4px 0 4px 2px;
+  }
+
+  .council-faces > span + span {
+    margin-left: -12px;
+  }
+
+  .council-faces .avatar-shell {
+    width: 26px;
+    height: 26px;
+  }
+
+  .dock {
+    padding-top: 6px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .notice {
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  /* ---- Welcome: the question and the dial up top, the composer on the bottom edge ---- */
+
+  .room[data-fresh="true"] .feed-inner {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .room[data-fresh="true"] .welcome {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    margin-block: 0;
+  }
+
+  .welcome-title {
+    margin-top: auto;
+    font-size: 34px;
+    text-wrap: balance;
+  }
+
+  .welcome-pressure {
+    margin: 18px 0 auto;
+    border: 0;
+    background: none;
+    padding: 0 0 24px;
+  }
+
+  .welcome .composer {
+    flex: none;
+  }
+
+  .welcome .pressure {
+    gap: 12px;
+  }
+
+  .welcome .pressure-dial .gauge {
+    width: 112px;
+  }
+
+  .welcome .pressure-dial .readout-name {
+    font-size: 30px;
+  }
+
+  .welcome .readout-mode {
+    font-size: 20px;
+  }
+
+  .pressure-stops-grid .pressure-stop {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .pressure-stops-grid .stop-text strong {
+    font-size: 20px;
+  }
+
+  .pressure-stops-grid .stop-text span {
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  /* Typing on the welcome: the question has been read; give its room to the keyboard. */
+  :root[data-keyboard="open"] .welcome-title {
+    display: none;
+  }
+
+  :root[data-keyboard="open"] .welcome-pressure {
+    margin-top: 0;
+    padding-bottom: 12px;
+  }
+
+  /* ---- Bottom sheets: the council panel and the pressure popover ---- */
+
+  .council {
+    top: auto;
+    left: 0;
+    width: 100%;
+    max-height: calc(var(--app-h, 100dvh) - 48px - env(safe-area-inset-top));
+    gap: 14px;
+    border-top: 2px solid var(--frame);
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -2px 0 var(--edge), 0 -18px 40px rgba(3, 4, 20, 0.6);
+    padding: 12px max(var(--gutter), env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom))
+      max(var(--gutter), env(safe-area-inset-left));
+    transform: translateY(105%);
+  }
+
+  .council[data-open="true"] {
+    transform: translateY(0);
+  }
+
+  .council-head {
+    min-height: 44px;
+    margin-right: -8px;
+  }
+
+  .chamber {
+    height: 236px;
+  }
+
+  .seat .avatar-shell {
+    width: 46px;
+    height: 46px;
+  }
+
+  .pressure-popover {
+    right: 0;
+    left: 0;
+    bottom: 0;
+    border-width: 2px 0 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -2px 0 var(--edge), 0 -18px 40px rgba(3, 4, 20, 0.6);
+    padding: 16px max(var(--gutter), env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom))
+      max(var(--gutter), env(safe-area-inset-left));
+  }
+
+  .pressure-popover .pressure-stop {
+    padding: 6px 8px;
+  }
+
+  /* ---- Sidebar ⋯ menu: 44px rows, no padding stacked on padding ---- */
+
+  .sb-menu {
+    gap: 0;
+    padding: 4px;
+  }
+
+  .sb-menu-group {
+    margin-top: 2px;
+    padding: 6px 4px 4px;
+  }
+
+  .sb-menu-label {
+    padding: 0 6px 6px;
+  }
+
+  .sb-menu-danger {
+    margin-top: 2px;
+  }
+
+  .sb-menu-confirm {
+    padding: 10px;
+  }
+
+  /* ---- Connection notes: under the room bar, which is taller on a phone ---- */
+
+  body:has(.room-bar) .pwa-status {
+    top: calc(64px + var(--phone-top, 0px) + env(safe-area-inset-top));
+  }
+
+  /* ---- Sign-in ---- */
+
+  .gate-shell {
+    align-items: start;
+    padding-top: calc(12px + var(--phone-top, 0px) + env(safe-area-inset-top));
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .auth-gate-shell {
+    gap: 20px;
+  }
+
+  .back-home {
+    margin-bottom: 12px;
+  }
+
+  .page-title {
+    margin-top: 0;
+    font-size: 40px;
+  }
+
+  .page-copy {
+    margin-top: 10px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .gate-party {
+    flex-wrap: nowrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .gate-party .avatar-shell {
+    width: 44px;
+    height: 44px;
+  }
+
+  .auth-gate-panel {
+    padding: 16px;
+  }
+
+  /* ---- Home ---- */
+
+  /* The hero's button sits right under it; one "Open your councils" per screen. */
+  .home-nav .btn-primary {
+    display: none;
+  }
+
+  .home-hero {
+    gap: 32px;
+    padding-top: 20px;
+    padding-bottom: 48px;
+  }
+
+  .hero-sub {
+    margin-top: 18px;
+    font-size: 16px;
+  }
+
+  .hero-cta {
+    margin-top: 24px;
+  }
+
+  .hero-cta > * {
+    flex: 1 1 100%;
+  }
+
+  .demo {
+    height: 420px;
+  }
+
+  .home-section {
+    padding-top: 44px;
+    padding-bottom: 44px;
+  }
+
+  .section-head {
+    margin-bottom: 24px;
+  }
+
+  .section-head p {
+    font-size: 16px;
+  }
+
+  .home-final {
+    margin-top: 0;
+    padding-top: 44px;
+    padding-bottom: 56px;
+  }
+}
+
+/* ---------- Small phones: one step down on the type scale ---------- */
+
+@media (max-width: 380px) {
+  .room-title {
+    font-size: 21px;
+  }
+
+  .welcome-title {
+    font-size: 30px;
+  }
+
+  .page-title {
+    font-size: 36px;
+  }
+}
+
+/* ---------- Short screens: landscape phones ---------- */
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .room-bar {
+    min-height: 48px;
+    padding-top: calc(4px + env(safe-area-inset-top));
+    padding-bottom: 4px;
+  }
+
+  .dock {
+    padding-top: 4px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+
+  .welcome-title {
+    font-size: 34px;
+  }
+
+  .welcome-pressure {
+    margin: 14px auto 14px;
+    padding: 12px;
+  }
+
+  .council,
+  .sidebar {
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .chamber {
+    height: 220px;
+  }
+}

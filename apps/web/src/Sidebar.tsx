@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Session } from "./lib/types";
 import { FALLBACK_PERSONAS, PERSONA_COLORS } from "./lib/council";
@@ -308,14 +308,31 @@ export default function Sidebar(props: SidebarProps) {
     window.requestAnimationFrame(() =>
       menuRef.current
         ?.querySelector<HTMLButtonElement>(confirmingDelete ? ".sb-confirm-cancel" : ".sb-menu-danger")
-        ?.focus()
+        ?.focus({ preventScroll: true })
     );
     if (!confirmingDelete) confirmSeen.current = false;
   }, [confirmingDelete]);
 
+  // A short screen (landscape, keyboard up) can't fit the menu above or below its row: slide it
+  // back inside the viewport before it paints, so focusing it never scrolls the list (which closes it).
+  useLayoutEffect(() => {
+    const element = menuRef.current;
+    if (!menu || !element) return;
+    element.style.top = menu.top === undefined ? "" : `${menu.top}px`;
+    element.style.bottom = menu.bottom === undefined ? "" : `${menu.bottom}px`;
+    const pad = 8;
+    const rect = element.getBoundingClientRect();
+    const overflow = rect.bottom - (window.innerHeight - pad);
+    if (rect.top >= pad && overflow <= 0) return;
+    element.style.top = `${Math.max(pad, rect.top < pad ? pad : rect.top - overflow)}px`;
+    element.style.bottom = "auto";
+  }, [menu, confirmingDelete]);
+
   useEffect(() => {
     if (!menu) return;
-    window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus());
+    window.requestAnimationFrame(() =>
+      menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus({ preventScroll: true })
+    );
     const onDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target)) return;
@@ -400,7 +417,7 @@ export default function Sidebar(props: SidebarProps) {
           role="alertdialog"
           aria-labelledby="sb-delete-title"
           aria-describedby="sb-delete-copy"
-          style={{ top: menu.top, bottom: menu.bottom, left: menu.left, width: MENU_W }}
+          style={{ left: menu.left, width: MENU_W }}
           onKeyDown={onMenuKey}
         >
           <p className="sb-confirm-title" id="sb-delete-title">
@@ -439,7 +456,7 @@ export default function Sidebar(props: SidebarProps) {
         className="sb-menu"
         role="menu"
         aria-label={`Actions for ${title}`}
-        style={{ top: menu.top, bottom: menu.bottom, left: menu.left, width: MENU_W }}
+        style={{ left: menu.left, width: MENU_W }}
         onKeyDown={onMenuKey}
       >
         <button

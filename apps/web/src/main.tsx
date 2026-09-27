@@ -7,6 +7,7 @@ import { registerServiceWorker, trackVisualViewport } from "./lib/pwa";
 import "./styles.css";
 import "./decor.css";
 import "./pwa.css";
+import "./mobile.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

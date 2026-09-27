@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Jersey+10&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Jersey+10&family=Pixelify+Sans:wght@400;600&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -7,7 +7,8 @@
 /*
   Think Tank.
   - Pixel type (Jersey 10) for names, headings and buttons; Atkinson Hyperlegible
-    for everything people actually read.
+    for the interface; Pixelify Sans for the conversation itself (replies, your
+    messages, the composer): a pixel face built to stay readable at body sizes.
   - Surfaces are flat. The one RPG "window" (double frame) is the composer:
     the dialogue box you talk to the council through.
   - The only hues belong to personas, passed per element as --persona.
@@ -30,6 +31,7 @@
 
   --font-pixel: "Jersey 10", system-ui, sans-serif;
   --font-read: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-chat: "Pixelify Sans", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --sidebar-w: 264px;
   --council-w: 315px;
@@ -430,12 +432,11 @@ ul {
   margin-left: 3px;
   vertical-align: -2px;
   background: var(--persona);
-  animation: blink 0.8s steps(1, end) infinite;
 }
 
+/* Pixel type has no italic (a faked slant smears it); dimmed colour says "not an answer yet". */
 .thinking {
   color: var(--ink-3);
-  font-style: italic;
 }
 
 .thinking::after {
@@ -443,8 +444,8 @@ ul {
   animation: dots 1.2s steps(4, end) infinite;
 }
 
-/* Dialogue windows: every reply in the same SNES window. The portrait rides in the nameplate,
-   so the text gets the window's full width. */
+/* Dialogue windows: every reply in the same SNES window. The portrait is its own framed tile on
+   the top edge, left of the nameplate, so the text gets the window's full width. */
 .dlg {
   position: relative;
   display: block;
@@ -465,8 +466,8 @@ ul {
 
 .dlg-plate {
   position: absolute;
-  top: -17px;
-  left: 12px;
+  top: -15px;
+  left: 50px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -489,18 +490,27 @@ ul {
   font-size: 11px;
 }
 
+/* Sits on the top edge beside the plate: same height as the plate, framed in the speaker's colour. */
 .dlg-face {
+  position: absolute;
+  top: -15px;
+  left: 12px;
   display: block;
 }
 
 .dlg-face .avatar-shell {
-  width: 24px;
-  height: 24px;
-  border: 0;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--persona);
+  border-radius: 4px;
+  background: var(--edge);
 }
 
 .dlg-text {
-  font-size: 16.5px;
+  font-family: var(--font-chat);
+  /* Pixelify's fi/fl ligatures render as a single odd glyph ("ﬁrst"); spell every letter. */
+  font-variant-ligatures: none;
+  font-size: 17.5px;
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -514,7 +524,6 @@ ul {
   margin-left: 3px;
   vertical-align: -2px;
   background: var(--persona);
-  animation: blink 0.8s steps(1, end) infinite;
 }
 
 .feed-inner > .turn-user:not(:first-child) {
@@ -528,6 +537,9 @@ ul {
 
 .turn-user p {
   max-width: min(80%, 60ch);
+  font-family: var(--font-chat);
+  /* Pixelify's fi/fl ligatures render as a single odd glyph ("ﬁrst"); spell every letter. */
+  font-variant-ligatures: none;
   border-radius: 12px 12px 3px 12px;
   background: var(--surface);
   padding: 10px 14px;
@@ -804,7 +816,9 @@ ul {
   margin: 0;
   border: 0;
   padding: 8px 4px;
-  font-family: var(--font-read);
+  font-family: var(--font-chat);
+  /* Pixelify's fi/fl ligatures render as a single odd glyph ("ﬁrst"); spell every letter. */
+  font-variant-ligatures: none;
   font-size: 16px;
   letter-spacing: normal;
   line-height: 1.5;
@@ -1407,7 +1421,7 @@ ul {
 }
 
 .voice-seg[data-live="true"] {
-  animation: voice-live 0.9s steps(1, end) infinite;
+  transform: scaleY(1.45);
 }
 
 /* The numbers that used to live on the sheet: turns, words and share of the voice. */
@@ -1676,11 +1690,6 @@ ul {
 .council-mode p {
   color: var(--ink-2);
   font-size: 13px;
-}
-
-@keyframes voice-live {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0.65; }
 }
 
 @keyframes walk-in {
@@ -2396,11 +2405,6 @@ ul {
 
 /* ---------- Motion ---------- */
 
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0.2; }
-}
-
 @keyframes talk {
   0%, 50% { transform: translateY(0); }
   51%, 100% { transform: translateY(-2px); }
@@ -2610,7 +2614,4 @@ ul {
   padding: 18px;
 }
 
-.welcome-pressure .pressure-readout {
-  justify-content: center;
-}
 
