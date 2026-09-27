@@ -8,7 +8,7 @@
 | API (`apps/api`) | **Render** web service (Node), defined in `render.yaml` | The API is a long-running Fastify server. It streams LLM tokens over SSE for up to a minute and parses uploads in the background. Serverless function timeouts and buffering don't suit that. Render runs a persistent Node process and passes streams through unbuffered. |
 | Database, auth, storage | **Supabase** (hosted project) | Already used by both apps. |
 
-Any other host that runs a persistent Node 20+ process also works for the API (Fly.io, Railway, a VM). Use the same build and start commands and the same env vars.
+Any other host that runs a persistent Node 22+ process (Supabase needs its built-in WebSocket) also works for the API (Fly.io, Railway, a VM). Use the same build and start commands and the same env vars.
 
 ## 1. Supabase
 

@@ -99,3 +99,51 @@ Your options, fastest first:
    - For higher limits, add your own email sender under Authentication → Emails → SMTP settings. You can then raise the email limit under Authentication → Rate Limits.
 
 While you sort it out, the preview on http://localhost:5199 runs with sign-in turned off, so you can keep using the app there. Councils won't be saved to your account in that preview.
+
+
+
+Render is asking for a card because `render.yaml` sets `plan: starter`, which is Render's paid tier (about $7/month). You can deploy for free either way:
+
+### Option A: Create the service by hand, without the blueprint
+This is the most reliable route. I'm not certain Render lets you use blueprints at all without a card.
+
+1. In Render, click **New → Web Service** and connect your `ThinkTank` repo.
+2. Fill in these settings:
+
+   | Setting | Value |
+   |---|---|
+   | Root Directory | `apps/api` |
+   | Runtime | Node |
+   | Build Command | `npm ci --include=dev && npm run build` |
+   | Start Command | `npm run start` |
+   | Instance Type | **Free** |
+   | Health Check Path (under Advanced) | `/health` |
+
+3. Add these environment variables. They're the ones the blueprint would have filled in for you.
+
+   | Key | Value |
+   |---|---|
+   | `NODE_ENV` | `production` |
+   | `NODE_VERSION` | `20.18.0` |
+   | `TRUST_PROXY` | `true` |
+   | `LOG_LEVEL` | `info` |
+   | `ALLOW_MEMORY_STORE` | `false` |
+   | `PROMPT_PREVIEW` | `false` |
+   | `RATE_LIMIT_MAX` | `30` |
+   | `SUPABASE_STORAGE_BUCKET` | `artifacts` |
+   | `SUPABASE_EXPORT_BUCKET` | `exports` |
+   | `MAX_ARTIFACT_SIZE` | `5242880` |
+   | `OPENROUTER_APP_NAME` | `Think Tank` |
+
+4. Add the secret values from step 2.3 of the guide: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`, `CORS_ORIGIN` and `OPENROUTER_SITE_URL`.
+5. Click **Create Web Service**.
+
+Everything after that is the same as in the guide.
+
+### Option B: Keep the blueprint
+Change `plan: starter` to `plan: free` in `render.yaml`, commit, push, and try the blueprint again. You can ask me to make that change in the main conversation. If Render still asks for a card, use Option A.
+
+### What the free plan means
+- **Sleep:** the API sleeps after about 15 minutes without traffic, and the first message after that takes 30–60 seconds while it wakes up. The app will look slow or show "can't reach the server" on that first try, then work normally.
+- **Monthly limit:** there's a cap of 750 free hours a month, which covers one service running all month.
+- **Workaround:** to reduce cold starts at no cost, you can have a free uptime pinger such as UptimeRobot hit `https://<your-api>.onrender.com/health` every 10 minutes.
