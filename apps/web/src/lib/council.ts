@@ -122,21 +122,3 @@ export const PERSONA_COLORS: Record<string, string> = {
 export const personaStyle = (name: string) =>
   ({ "--persona": PERSONA_COLORS[name] ?? "#eceaff" }) as CSSProperties;
 
-export const STARTER_PROMPTS: Record<string, string[]> = {
-  Brainstorm: [
-    "Give me ten names for a study app that feels like a co-op game.",
-    "What would this idea look like if it had to go viral in a week?"
-  ],
-  "Shark Tank": [
-    "I charge $12/month for a habit tracker with no free tier. Why would anyone pay?",
-    "Who pays for this first, and what do they stop paying for instead?"
-  ],
-  "Devils Court": [
-    "Here's my plan. Find the assumption that kills it.",
-    "What happens when a bigger company copies this in a month?"
-  ],
-  "Co-Founder": [
-    "I have two weekends. What's the smallest version worth shipping?",
-    "Turn this idea into the first five tasks for Monday."
-  ]
-};

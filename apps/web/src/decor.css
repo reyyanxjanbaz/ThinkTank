@@ -48,20 +48,6 @@ body {
     var(--rail);
 }
 
-/* The pressure pools at the foot of the council panel, a little more per level. */
-.app-shell[data-heat] .council {
-  background:
-    radial-gradient(120% 150px at 50% 100%, color-mix(in srgb, var(--room-heat) var(--pool, 4%), transparent) 0 55%, transparent 0),
-    radial-gradient(150% 240px at 50% 100%, color-mix(in srgb, var(--room-heat) calc(var(--pool, 4%) / 2), transparent) 0 55%, transparent 0),
-    linear-gradient(transparent 30%, var(--rail) 90%),
-    var(--stars),
-    var(--rail);
-}
-
-.app-shell[data-heat="2"] { --pool: 5%; }
-.app-shell[data-heat="3"] { --pool: 6.5%; }
-.app-shell[data-heat="4"] { --pool: 8%; }
-
 /* ---------- The room: a lit floor ---------- */
 
 .room {
@@ -82,30 +68,6 @@ body {
     var(--floor),
     var(--bg);
 }
-
-/* Heat from above: three hard bands, no smooth airbrush, like an SNES palette gradient. */
-.room-decor::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(55% 90px at 50% 0, color-mix(in srgb, var(--room-heat, #6fe3c1) 8%, transparent) 0 70%, transparent 0),
-    radial-gradient(75% 170px at 50% 0, color-mix(in srgb, var(--room-heat, #6fe3c1) 5%, transparent) 0 70%, transparent 0),
-    radial-gradient(100% 270px at 50% 0, color-mix(in srgb, var(--room-heat, #6fe3c1) 2.5%, transparent) 0 70%, transparent 0);
-  opacity: 0.35;
-  animation: heat-1 320ms steps(4, end) backwards;
-}
-
-/* A new pressure re-lights the room: each level has its own (identical) keyframes, so a change
-   of level restarts the fade-in. */
-.app-shell[data-heat="2"] .room-decor::before { opacity: 0.5; animation-name: heat-2; }
-.app-shell[data-heat="3"] .room-decor::before { opacity: 0.65; animation-name: heat-3; }
-.app-shell[data-heat="4"] .room-decor::before { opacity: 0.8; animation-name: heat-4; }
-
-@keyframes heat-1 { from { opacity: 0; } }
-@keyframes heat-2 { from { opacity: 0; } }
-@keyframes heat-3 { from { opacity: 0; } }
-@keyframes heat-4 { from { opacity: 0; } }
 
 /* The speaker's light, rising from the dock. Fades in per voice, out when the round ends. */
 .room-aura {
@@ -197,7 +159,6 @@ body {
 .sb-menu-format:active:not(:disabled),
 .sb-confirm-cancel:active:not(:disabled),
 .sb-confirm-delete:active:not(:disabled),
-.starter:active,
 .pressure-stop:active,
 .pressure-trigger:active,
 .sheet-ask:active:not(:disabled),
@@ -284,7 +245,6 @@ body {
   .scrim-right,
   .pressure-stop[aria-checked="true"],
   .jump-latest,
-  .app-shell[data-heat] .room-decor::before,
   .room-aura[data-on="true"],
   .btn-primary:hover::after,
   .send-button:hover::after,

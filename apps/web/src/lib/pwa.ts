@@ -92,16 +92,31 @@ export function trackVisualViewport(): void {
   const viewport = window.visualViewport;
   if (!viewport) return;
   const root = document.documentElement;
+  let lastHeight = "";
+  let lastKeyboard = false;
+  // Only on resize (keyboard opening/closing, rotation), never on scroll: iOS scrolls the visual
+  // viewport as the caret moves, and snapping that back on every keystroke made the screen jitter.
   const sync = () => {
     // Pinch-zoom also shrinks the visual viewport; only follow keyboard-driven changes.
     if (viewport.scale > 1.01) return;
-    root.style.setProperty("--app-h", `${Math.round(viewport.height)}px`);
+    const height = `${Math.round(viewport.height)}px`;
+    if (height !== lastHeight) {
+      lastHeight = height;
+      root.style.setProperty("--app-h", height);
+    }
     // A big gap between layout and visual viewport means the on-screen keyboard is up.
-    if (window.innerHeight - viewport.height > 120) root.dataset.keyboard = "open";
-    else delete root.dataset.keyboard;
-    if (window.scrollY !== 0 && viewport.height < window.innerHeight) window.scrollTo(0, 0);
+    const keyboard = window.innerHeight - viewport.height > 120;
+    if (keyboard !== lastKeyboard) {
+      lastKeyboard = keyboard;
+      if (keyboard) {
+        root.dataset.keyboard = "open";
+        // The shell now fits above the keyboard; undo the page shift iOS made to reveal the input, once.
+        if (window.scrollY !== 0) window.scrollTo(0, 0);
+      } else {
+        delete root.dataset.keyboard;
+      }
+    }
   };
   viewport.addEventListener("resize", sync);
-  viewport.addEventListener("scroll", sync);
   sync();
 }

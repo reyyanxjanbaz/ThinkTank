@@ -284,3 +284,28 @@ body:has(.composer) .pwa-chip {
     opacity: 0;
   }
 }
+
+/* ---------- Phones only: a little breathing room at the top of every screen ---------- */
+
+@media (max-width: 640px) {
+  :root {
+    --phone-top: 10px;
+  }
+
+  .room-bar {
+    padding-top: calc(8px + var(--phone-top) + env(safe-area-inset-top));
+  }
+
+  .sidebar,
+  .council {
+    padding-top: calc(16px + var(--phone-top) + env(safe-area-inset-top));
+  }
+
+  .home-nav {
+    padding-top: calc(14px + var(--phone-top) + env(safe-area-inset-top));
+  }
+
+  .gate-shell {
+    padding-top: calc(32px + var(--phone-top) + env(safe-area-inset-top));
+  }
+}

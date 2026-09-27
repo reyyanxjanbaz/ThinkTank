@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import type { Persona, Session, Turn } from "./lib/types";
 import {
@@ -20,16 +19,15 @@ import {
 import { hasSupabaseConfig, supabase } from "./lib/supabaseClient";
 import { PersonaSprite } from "./sprites";
 import Sidebar from "./Sidebar";
-import { HeatBars, PRESSURE, PressureControl, PressureStrip, pressureFor } from "./Pressure";
+import { PressureControl, PressureStrip } from "./Pressure";
 import Home from "./Home";
 import CouncilPanel from "./CouncilPanel";
 import Composer from "./Composer";
 import { RoomDecor } from "./Decor";
-import { commandForMode, parsePrompt } from "./lib/tokens";
+import { parsePrompt } from "./lib/tokens";
 import {
   FALLBACK_PERSONAS,
   MODES,
-  STARTER_PROMPTS,
   personaStyle
 } from "./lib/council";
 
@@ -223,6 +221,8 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [hasNewFeed, setHasNewFeed] = useState(false);
+  // True whenever the reader isn't at the bottom of the feed; drives the jump-to-latest arrow.
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [view, setView] = useState<"home" | "app">(readView);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -361,12 +361,33 @@ export default function App() {
     window.location.hash = "#/";
   };
 
-  // Grow the composer with its content, up to a cap.
-  useEffect(() => {
+  // Grow the composer with its content, up to a cap. Measure on an invisible copy so the real
+  // box never collapses mid-keystroke: collapsing it hid the caret, iOS scrolled the page to find
+  // it, and the whole screen jittered on every letter.
+  useLayoutEffect(() => {
     const element = promptRef.current;
-    if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, 220)}px`;
+    if (!element?.parentElement) return;
+    const probe = element.cloneNode(false) as HTMLTextAreaElement;
+    probe.removeAttribute("id");
+    probe.removeAttribute("name");
+    probe.setAttribute("aria-hidden", "true");
+    probe.tabIndex = -1;
+    probe.value = element.value;
+    Object.assign(probe.style, {
+      position: "absolute",
+      visibility: "hidden",
+      pointerEvents: "none",
+      left: "0",
+      top: "0",
+      width: `${element.offsetWidth}px`,
+      height: "0",
+      minHeight: "0",
+      overflow: "hidden"
+    });
+    element.parentElement.appendChild(probe);
+    const next = `${Math.min(probe.scrollHeight, 220)}px`;
+    probe.remove();
+    if (element.style.height !== next) element.style.height = next;
   }, [prompt]);
 
   useEffect(() => {
@@ -456,18 +477,27 @@ export default function App() {
     let lastTop = element.scrollTop;
     const handleScroll = () => {
       const top = element.scrollTop;
-      if (isFeedNearBottom(element)) {
+      const nearBottom = isFeedNearBottom(element);
+      if (nearBottom) {
         stickToBottomRef.current = true;
         setHasNewFeed(false);
       } else if (top < lastTop - 4) {
         stickToBottomRef.current = false;
       }
+      // While following the stream, growth between frames isn't the reader leaving the bottom.
+      setAwayFromBottom(!nearBottom && !stickToBottomRef.current);
       lastTop = top;
     };
     handleScroll();
     element.addEventListener("scroll", handleScroll);
+    // Content or the feed itself can change size without a scroll event (a reply lands, the
+    // composer grows, the phone rotates), so re-check the position then too.
+    const resizeObserver = new ResizeObserver(handleScroll);
+    resizeObserver.observe(element);
+    if (element.firstElementChild) resizeObserver.observe(element.firstElementChild);
     return () => {
       element.removeEventListener("scroll", handleScroll);
+      resizeObserver.disconnect();
     };
   }, [isSignedIn]);
 
@@ -478,6 +508,7 @@ export default function App() {
     if (stickToBottomRef.current) {
       scrollFeedToBottom();
       setHasNewFeed(false);
+      setAwayFromBottom(false);
       return;
     }
     if (feed.length > 0) {
@@ -1267,20 +1298,8 @@ export default function App() {
     for (const item of replies) if (!speakers.includes(item.speaker)) speakers.push(item.speaker);
     return { id: session.id, turnCount: replies.length, speakers };
   }, [session, feed]);
-  // One starter per pressure level, coolest first; picking one also sets that pressure.
-  const starters = PRESSURE.map((stop) => ({
-    mode: stop.mode,
-    text: (STARTER_PROMPTS[stop.mode] ?? STARTER_PROMPTS.Brainstorm)[0]
-  }));
   const isFreshRoom = !session && feed.length === 0;
   const visibleNotice = !isSending && statusMessage ? statusMessage : "";
-
-  // A starter carries its pressure as a /command, which also shows people the shortcut exists.
-  const applyStarter = (text: string, starterMode: string) => {
-    const command = commandForMode(starterMode);
-    setPrompt(command ? `/${command.word} ${text}` : text);
-    promptRef.current?.focus();
-  };
 
   const toggleAsk = (name: string) => {
     setAskList((list) => (list.includes(name) ? list.filter((item) => item !== name) : [...list, name]));
@@ -1342,30 +1361,6 @@ export default function App() {
     />
   );
 
-  const renderStarters = () => (
-    <div className="starter-grid">
-      {starters.map(({ mode: starterMode, text }) => {
-        const stop = pressureFor(starterMode);
-        return (
-          <button
-            key={text}
-            type="button"
-            className="starter"
-            style={{ "--heat": stop.heat } as CSSProperties}
-            onClick={() => applyStarter(text, starterMode)}
-            title={`Starts at ${stop.name} (${stop.mode})`}
-          >
-            <span className="starter-head" aria-hidden="true">
-              <HeatBars level={stop.level} />
-              <code>/{commandForMode(starterMode)?.word}</code>
-            </span>
-            <span>{text}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-
   const renderWelcome = () => (
     <section className="welcome" aria-labelledby="welcome-title">
       <h1 className="welcome-title" id="welcome-title">
@@ -1377,7 +1372,6 @@ export default function App() {
       </div>
 
       {renderComposer()}
-      {renderStarters()}
     </section>
   );
 
@@ -1448,8 +1442,7 @@ export default function App() {
           {isFreshRoom && renderWelcome()}
           {!isFreshRoom && feed.length === 0 && (
             <div className="empty-feed">
-              <p>The floor is open. Ask something with real stakes, or start from one of these:</p>
-              {renderStarters()}
+              <p>The floor is open. Ask something with real stakes.</p>
             </div>
           )}
           {feed.map((entry) => {
@@ -1472,11 +1465,11 @@ export default function App() {
               >
                 <header className="dlg-plate">
                   <strong>{entry.speaker}</strong>
+                  <span className="dlg-face" aria-hidden="true">
+                    <PixelAvatar name={entry.speaker} compact talking={streaming && speakingNow === entry.speaker} />
+                  </span>
                   <time>{entry.time}</time>
                 </header>
-                <span className="dlg-face" aria-hidden="true">
-                  <PixelAvatar name={entry.speaker} compact talking={streaming && speakingNow === entry.speaker} />
-                </span>
                 <p className="dlg-text">
                   {entry.content ? normalizePersonaText(entry.content) : <span className="thinking">thinking</span>}
                 </p>
@@ -1484,12 +1477,32 @@ export default function App() {
             );
           })}
         </div>
-        {hasNewFeed && (
-          <button type="button" className="jump-latest" onClick={() => scrollFeedToBottom("smooth")}>
-            New replies below
-          </button>
-        )}
       </div>
+
+      {/* Outside the scroller so it never adds to the feed's height; sits on the feed's bottom edge. */}
+      {!isFreshRoom && (
+        <div className="jump-anchor">
+          {awayFromBottom && feed.length > 0 && (
+            <button
+              type="button"
+              className="jump-latest"
+              data-new={hasNewFeed || undefined}
+              aria-label={hasNewFeed ? "New replies below. Jump to the latest" : "Jump to the latest"}
+              title="Jump to the latest"
+              onClick={() => {
+                stickToBottomRef.current = true;
+                setAwayFromBottom(false);
+                setHasNewFeed(false);
+                scrollFeedToBottom("smooth");
+              }}
+            >
+              <svg viewBox="0 0 10 10" width="20" height="20" aria-hidden="true" shape-rendering="crispEdges">
+                <path fill="currentColor" d="M4 1h2v5h2v1H7v1H6v1H4V8H3V7H2V6h2z" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
 
       {!isFreshRoom && (
         <footer className="dock">
@@ -1687,8 +1700,6 @@ export default function App() {
       className="app-shell"
       data-fresh={isFreshRoom}
       data-sidebar-collapsed={sidebarCollapsed}
-      data-heat={pressureFor(mode).level}
-      style={{ "--room-heat": pressureFor(mode).heat } as CSSProperties}
     >
       <Sidebar
         sessions={sessions}
