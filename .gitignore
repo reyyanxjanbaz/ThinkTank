@@ -28,3 +28,4 @@ supabase/.branches/
 supabase/.temp/
 
 .playwright-mcp
+brag-output

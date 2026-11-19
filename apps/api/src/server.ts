@@ -227,13 +227,23 @@ const ExportCreateSchema = z.object({
   format: z.enum(["md", "pdf"])
 });
 
-const BLOCKLIST: RegExp[] = [
-  /ignore\s+previous/i,
-  /system\s+prompt/i,
-  /developer\s+message/i
-];
-
-const isBlocked = (value: string) => BLOCKLIST.some((rule) => rule.test(value));
+// Guest and title requests run on the project's LLM key without an account, so they share a
+// daily ceiling on top of the per-IP rate limit. In-memory, per instance; resets at UTC midnight.
+const GUEST_DAILY_LIMIT = (() => {
+  const parsed = Number.parseInt(process.env.GUEST_DAILY_LIMIT ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 500;
+})();
+const guestBudget = { day: "", used: 0 };
+const takeGuestBudget = () => {
+  const today = new Date().toISOString().slice(0, 10);
+  if (guestBudget.day !== today) {
+    guestBudget.day = today;
+    guestBudget.used = 0;
+  }
+  if (guestBudget.used >= GUEST_DAILY_LIMIT) return false;
+  guestBudget.used += 1;
+  return true;
+};
 
 if (!hasSupabaseConfig && !allowMemoryStore) {
   throw new Error(
@@ -350,10 +360,7 @@ app.get("/health", { logLevel: "warn" }, async () => ({
 
 app.get("/api/llm/status", async () => ({
   configured: hasOpenAIConfig,
-  provider: openaiProvider,
-  model: openaiModel,
-  baseUrl: openaiBaseUrl,
-  temperature: openaiTemperature
+  provider: openaiProvider
 }));
 
 app.get("/api/personas", async () => ({
@@ -367,12 +374,6 @@ app.post("/api/validate-prompt", async (request, reply) => {
     return reply.code(400).send({
       error: "invalid_request",
       issues: parsed.error.issues
-    });
-  }
-
-  if (isBlocked(parsed.data.prompt)) {
-    return reply.code(400).send({
-      error: "blocked_prompt"
     });
   }
 
@@ -397,15 +398,6 @@ app.post("/api/prompt-preview", async (request, reply) => {
 
   const { userPrompt, history, artifacts, persona, mode } = parsed.data;
   const historyItems = history ?? [];
-  const blocked = [userPrompt, ...historyItems.map((item) => item.content)].some(
-    isBlocked
-  );
-
-  if (blocked) {
-    return reply.code(400).send({
-      error: "blocked_prompt"
-    });
-  }
 
   const prompt = buildPrompt({
     persona,
@@ -434,16 +426,11 @@ app.post("/api/guest/stream", { config: llmRateLimit }, async (request, reply) =
     });
   }
 
-  const history = parsed.data.history ?? [];
-  const blocked = [parsed.data.prompt, ...history.map((item) => item.content)].some(
-    isBlocked
-  );
-
-  if (blocked) {
-    return reply.code(400).send({
-      error: "blocked_prompt"
-    });
+  if (!takeGuestBudget()) {
+    return reply.code(429).send({ error: "guest_daily_limit" });
   }
+
+  const history = parsed.data.history ?? [];
 
   const systemPrompt = buildSystemPrompt({
     persona: parsed.data.persona,
@@ -530,12 +517,6 @@ app.post("/api/sessions/:sessionId/stream", { config: llmRateLimit }, async (req
     });
   }
 
-  if (isBlocked(parsed.data.prompt)) {
-    return reply.code(400).send({
-      error: "blocked_prompt"
-    });
-  }
-
   const { sessionId } = request.params as { sessionId: string };
   const userId = await requireUserId(request, reply);
   if (!userId) {
@@ -543,6 +524,19 @@ app.post("/api/sessions/:sessionId/stream", { config: llmRateLimit }, async (req
   }
 
   let onClose: (() => void) | null = null;
+  let fullText = "";
+  let replySaved = false;
+  // Whatever streamed to the browser is what the user saw, so it's what gets kept,
+  // whether the round finished, the tab closed, or the provider failed partway.
+  const saveReply = async () => {
+    if (replySaved || !fullText.trim()) return;
+    replySaved = true;
+    try {
+      await store.addTurn({ sessionId, persona: parsed.data.persona, content: fullText });
+    } catch (error) {
+      app.log.error({ err: error, sessionId }, "saving persona reply failed");
+    }
+  };
   try {
     const session = await store.getSession(sessionId, userId);
 
@@ -614,8 +608,6 @@ app.post("/api/sessions/:sessionId/stream", { config: llmRateLimit }, async (req
       { signal: abortController.signal }
     );
 
-    let fullText = "";
-
     for await (const chunk of stream) {
       if (closed) {
         break;
@@ -633,14 +625,9 @@ app.post("/api/sessions/:sessionId/stream", { config: llmRateLimit }, async (req
       reply.raw.end();
     }
 
-    if (!closed && fullText.trim()) {
-      await store.addTurn({
-        sessionId,
-        persona: parsed.data.persona,
-        content: fullText
-      });
-    }
+    await saveReply();
   } catch (error) {
+    await saveReply();
     if (error instanceof Error && error.name === "AbortError") {
       return;
     }
@@ -795,8 +782,8 @@ app.post("/api/titles", { config: llmRateLimit }, async (request, reply) => {
     return reply.code(400).send({ error: "invalid_request", issues: parsed.error.issues });
   }
 
-  if (isBlocked(parsed.data.prompt)) {
-    return reply.code(400).send({ error: "blocked_prompt" });
+  if (!takeGuestBudget()) {
+    return reply.code(429).send({ error: "guest_daily_limit" });
   }
 
   try {
@@ -986,12 +973,6 @@ app.post("/api/sessions/:sessionId/turns", async (request, reply) => {
       });
     }
 
-    if (isBlocked(parsed.data.content)) {
-      return reply.code(400).send({
-        error: "blocked_prompt"
-      });
-    }
-
     const turn = await store.addTurn({
       sessionId,
       persona: parsed.data.persona,
@@ -1068,6 +1049,7 @@ app.post("/api/sessions/:sessionId/artifacts", async (request, reply) => {
 
 app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => {
   const { sessionId } = request.params as { sessionId: string };
+  let artifact: Awaited<ReturnType<Store["addArtifact"]>> | null = null;
   const userId = await requireUserId(request, reply);
   if (!userId) {
     return;
@@ -1120,7 +1102,7 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
 
     const storageContentType = inferContentType(artifactKind, filename);
 
-    const artifact = await store.addArtifact({
+    artifact = await store.addArtifact({
       sessionId,
       filename,
       mime: storageContentType,
@@ -1141,6 +1123,7 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
       }
     }
 
+    const artifactId = artifact.id;
     void (async () => {
       try {
         const parsedText = await parseArtifactBuffer(
@@ -1148,22 +1131,24 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
           storageContentType,
           filename
         );
-        await store.updateArtifact(artifact.id, {
+        await store.updateArtifact(artifactId, {
           status: "ready",
           parsedText: limitText(parsedText)
         });
       } catch (error) {
         app.log.error(
           {
-            artifactId: artifact.id,
+            artifactId,
             sessionId,
             filename,
             err: error
           },
           "Artifact parsing failed"
         );
-        await store.updateArtifact(artifact.id, {
-          status: "failed"
+        // This runs detached from the request: a second failure here must not become an
+        // unhandled rejection, which would take the whole process down.
+        await store.updateArtifact(artifactId, { status: "failed" }).catch((updateError) => {
+          app.log.error({ artifactId, err: updateError }, "marking artifact failed also failed");
         });
       }
     })();
@@ -1177,6 +1162,10 @@ app.post("/api/sessions/:sessionId/artifacts/upload", async (request, reply) => 
       },
       "Artifact upload failed"
     );
+    // The row was created before the storage upload; don't leave it stuck at "parsing".
+    if (artifact) {
+      await store.updateArtifact(artifact.id, { status: "failed" }).catch(() => undefined);
+    }
     return reply.code(500).send({
       error: "upload_failed"
     });

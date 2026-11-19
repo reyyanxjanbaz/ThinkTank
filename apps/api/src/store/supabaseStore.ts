@@ -263,36 +263,41 @@ export const listTurns = async (sessionId: string) => {
 
 export const addTurn = async (input: AddTurnInput) => {
   const client = ensureClient();
-  const { data: latest, error: latestError } = await client
-    .from("turns")
-    .select("order_index")
-    .eq("session_id", input.sessionId)
-    .order("order_index", { ascending: false })
-    .limit(1);
+  // order_index is "latest + 1". Two writers (two tabs, a retried stream) can read the same
+  // latest value; the unique index on (session_id, order_index) rejects the loser, which retries.
+  for (let attempt = 0; ; attempt += 1) {
+    const { data: latest, error: latestError } = await client
+      .from("turns")
+      .select("order_index")
+      .eq("session_id", input.sessionId)
+      .order("order_index", { ascending: false })
+      .limit(1);
 
-  if (latestError) {
-    throw new Error(latestError.message);
+    if (latestError) {
+      throw new Error(latestError.message);
+    }
+
+    const orderIndex = (latest?.[0]?.order_index ?? 0) + 1;
+    const { data, error } = await client
+      .from("turns")
+      .insert({
+        session_id: input.sessionId,
+        persona: input.persona,
+        role: input.role ?? null,
+        content: input.content,
+        tokens: input.tokens ?? null,
+        order_index: orderIndex
+      })
+      .select("id,session_id,persona,role,content,tokens,created_at,order_index")
+      .single();
+
+    if (error) {
+      if (error.code === "23505" && attempt < 4) continue;
+      throw new Error(error.message);
+    }
+
+    return mapTurn(data);
   }
-
-  const orderIndex = (latest?.[0]?.order_index ?? 0) + 1;
-  const { data, error } = await client
-    .from("turns")
-    .insert({
-      session_id: input.sessionId,
-      persona: input.persona,
-      role: input.role ?? null,
-      content: input.content,
-      tokens: input.tokens ?? null,
-      order_index: orderIndex
-    })
-    .select("id,session_id,persona,role,content,tokens,created_at,order_index")
-    .single();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return mapTurn(data);
 };
 
 export const listArtifacts = async (sessionId: string) => {

@@ -45,6 +45,12 @@ type FeedItem = {
 
 type AuthMode = "login" | "signup";
 
+// Supabase surfaces an unreachable auth server as the browser's raw "Failed to fetch".
+const authErrorText = (error: { name?: string; message: string }) =>
+  error.name === "AuthRetryableFetchError" || /failed to fetch|network|load failed/i.test(error.message)
+    ? "Can't reach the sign-in service right now. Try again in a minute."
+    : error.message;
+
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const CONFIGURED_API_URL = (
   import.meta.env.VITE_API_URL?.trim() || (import.meta.env.PROD ? "" : "http://localhost:3001")
@@ -544,7 +550,7 @@ export default function App() {
     });
 
     if (error) {
-      setAuthMessage(`GitHub sign-in failed: ${error.message}`);
+      setAuthMessage(`GitHub sign-in failed: ${authErrorText(error)}`);
     }
   };
 
@@ -569,7 +575,7 @@ export default function App() {
     });
 
     if (error) {
-      setAuthMessage(`Login failed: ${error.message}`);
+      setAuthMessage(`Login failed: ${authErrorText(error)}`);
       setIsAuthSubmitting(false);
       return;
     }
@@ -613,7 +619,7 @@ export default function App() {
     });
 
     if (error) {
-      setAuthMessage(`Sign-up failed: ${error.message}`);
+      setAuthMessage(`Sign-up failed: ${authErrorText(error)}`);
       setIsAuthSubmitting(false);
       return;
     }
@@ -634,7 +640,7 @@ export default function App() {
             "Account created, but Supabase email confirmation is enabled. Disable Confirm Email in Supabase Auth settings."
           );
         } else {
-          setAuthMessage(`Sign-up succeeded but auto-login failed: ${signInError.message}`);
+          setAuthMessage(`Sign-up succeeded but auto-login failed: ${authErrorText(signInError)}`);
         }
         setIsAuthSubmitting(false);
         return;
@@ -666,7 +672,7 @@ export default function App() {
     });
 
     if (error) {
-      setAuthMessage(`Password reset failed: ${error.message}`);
+      setAuthMessage(`Password reset failed: ${authErrorText(error)}`);
       setIsAuthSubmitting(false);
       return;
     }
@@ -709,7 +715,7 @@ export default function App() {
     });
 
     if (error) {
-      setAuthMessage(`Password update failed: ${error.message}`);
+      setAuthMessage(`Password update failed: ${authErrorText(error)}`);
       setIsAuthSubmitting(false);
       return;
     }
@@ -1110,8 +1116,13 @@ export default function App() {
           { sessionId: activeSession.id, persona: targets[0], prompt: trimmed },
           effectiveToken
         );
-      } catch {
-        setStatusMessage("That prompt was blocked, or the API isn't responding.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        setStatusMessage(
+          message.includes("(400)")
+            ? "That message is too long. Keep it under 4,000 characters."
+            : "Couldn't reach the council. Check your connection and try again."
+        );
         setIsSending(false);
         return;
       }
@@ -1181,19 +1192,9 @@ export default function App() {
           { onToken: appendToken }
         );
       } catch (error) {
-        if (requiresAuth) {
-          writeStreamFailureToFeed(responseId, error);
-        } else {
-          collected = "";
-          setFeed((prev) =>
-            prev.map((item) => (item.id === responseId ? { ...item, content: "" } : item))
-          );
-          try {
-            await streamGuest();
-          } catch (guestError) {
-            writeStreamFailureToFeed(responseId, guestError);
-          }
-        }
+        // No silent retry through the guest endpoint: the server has already saved this
+        // round's question, and a guest reply would never be saved next to it.
+        writeStreamFailureToFeed(responseId, error);
       }
       return collected;
     };

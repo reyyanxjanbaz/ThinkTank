@@ -17,6 +17,7 @@ Any other host that runs a persistent Node 22+ process (Supabase needs its built
    1. `supabase/migrations/2026051001_init.sql`: tables, enums and indexes (profiles, sessions, turns, artifacts, exports, retention_events).
    2. `supabase/migrations/2026051002_rls.sql`: row-level security policies, plus the `artifacts` and `exports` storage buckets and their object policies.
    3. `supabase/migrations/2026092701_session_summaries.sql`: the `session_summaries(p_user_id)` RPC used by the council list. Only the service role may execute it. Until it exists, the API falls back to counting from embedded turns and logs a warning once.
+   4. `supabase/migrations/2026112001_turn_order_unique.sql`: a unique index on `turns(session_id, order_index)`, so two writers can't give turns the same position (the API retries on conflict). It renumbers any existing duplicates first.
 
    Apply them with the CLI (`supabase link --project-ref <ref>` then `supabase db push`), or paste each file into the SQL editor in the order above.
 3. Check that the storage buckets `artifacts` and `exports` exist and are **private**.
@@ -88,6 +89,7 @@ Caching (from `vercel.json`):
 | `OPENROUTER_APP_NAME` | no | `Think Tank` | App name sent to OpenRouter. |
 | `MAX_ARTIFACT_SIZE` | no | `5242880` | Maximum upload size in bytes. |
 | `RATE_LIMIT_MAX` | no | `30` | LLM requests per client IP per minute, counted per endpoint (the two streams and titles). |
+| `GUEST_DAILY_LIMIT` | no | `500` | Daily ceiling, per instance, on the LLM calls that need no account (guest streams and titles). Past it they return `429 guest_daily_limit` until UTC midnight. |
 | `KEEP_AWAKE` | no | on | The API pings its own public `/health` (a `HEAD`, no body, no database or LLM) so Render's free tier doesn't sleep it after 15 idle minutes. Set to `false` on a paid instance, which never sleeps. |
 | `KEEP_AWAKE_MINUTES` | no | `10` | Ping interval, 1–14 minutes. |
 | `KEEP_AWAKE_URL` | no | `RENDER_EXTERNAL_URL` | The public URL to ping. Render provides `RENDER_EXTERNAL_URL` itself, so leave this empty there. |
