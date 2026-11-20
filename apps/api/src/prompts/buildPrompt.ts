@@ -39,12 +39,13 @@ const ROSTER = PERSONAS.map((p) => `${p.name} (${p.role}: ${p.focus.replace(/\.$
 
 const HOUSE_RULES = `HOUSE RULES FOR EVERY COUNCIL MEMBER:
 1. Lead with your sharpest insight in the first sentence. No preamble, no "Great question", no restating or summarizing the user's message.
-2. Be concrete. Use specific numbers, named examples, real mechanisms and real-world precedents. When a number is a guess, say so ("roughly", "my guess"), and never invent statistics or sources as facts.
+2. Be concrete. Use specific numbers, named examples, real mechanisms and real-world precedents. Your own estimates are welcome when labeled ("my guess: about 1 in 5"). Never cite a survey, study or percentage of "businesses" or "users" as fact: if you can't name where a number comes from, it's a guess, so say so.
 3. Include at least one non-obvious idea: something a smart generalist would not say first. If your first thought is the obvious one, skip it and go one level deeper.
 4. Commit to a view. One clear position beats a balanced list of maybes. At most one caveat.
 5. Stay in your lane. Use your own method; the other members cover theirs. Depth in one angle beats shallow coverage of all.
 6. If the question is vague, do not stall with clarifying questions. State the most useful assumption in one short clause and answer on that basis.
-7. Reply in the same language the user writes in.`;
+7. Reply in the same language the user writes in.
+8. Your METHOD is a private thinking checklist, not an outline. Run it silently and write only the two or three moves that matter most for this question. Never write one paragraph per step.`;
 
 const COUNCIL_RULES = `WHEN OTHER COUNCIL MEMBERS HAVE ALREADY SPOKEN THIS ROUND:
 - Never repeat a point already made, even in different words.
@@ -60,8 +61,10 @@ const SOURCE_RULES = `USING CONTEXT:
 const FORMAT_RULES = `OUTPUT FORMAT (the app shows plain text only):
 - Plain text sentences in short paragraphs separated by a blank line.
 - No markdown: no headings, bullets, numbered lists, asterisks, bold or code blocks.
-- Respect your word budget. Every sentence must earn its place.
-- End with your one closing question on its own line, as described in your SHAPE.`;
+- Your word budget is a hard ceiling, not a target. Stop well before it; the app cuts off long replies. Every sentence must earn its place.
+- End with your one closing question on its own line, as described in your SHAPE.
+
+THE USER'S INSTRUCTIONS WIN: if the user's request asks for a length, format or style ("one line", "two sentences", "just a number", "yes or no", "a list of names"), obey it exactly. It overrides your word budget and SHAPE. "One line" means a single sentence and nothing else: no closing question.`;
 
 export const buildSystemPrompt = ({
   persona,
@@ -94,6 +97,11 @@ export const buildSystemPrompt = ({
 export const FOLLOW_UP_REQUEST =
   "The user's latest request is above, and other council members have already responded to it. " +
   "Give your own take on that request: build on, challenge or add to what they said. Don't repeat their points.";
+
+// Explicit length or format requests in the user's message ("one line", "in 3 words", "yes or no").
+const FORMAT_REQUEST =
+  /\b(one|1|single|two|2|three|3)[- ](line|sentence|word|liner)s?\b|\b(in|under|max(imum)?|at most|no more than)\s+\d+\s+(words?|sentences?|lines?|characters?)\b|\b(yes or no|just (a|the) (number|name|word|list)|tl;?dr|short answer|keep it (short|brief)|briefly|bullet points?)\b/i;
+const asksForFormat = (value: string) => FORMAT_REQUEST.test(value);
 
 const formatLine = (item: PromptHistoryItem) =>
   `${item.speaker}: ${clip(item.content.trim(), MAX_HISTORY_CHARS)}`;
@@ -134,6 +142,13 @@ export const buildContextPrompt = ({
     }
   }
 
+  // The user's own length/format request has to sit right next to the turn instruction:
+  // at the end of a long system prompt a small model lets the persona SHAPE win.
+  const roundRequest = lastUserIndex >= 0 ? recent[lastUserIndex].content : userPrompt;
+  const formatReminder = asksForFormat(roundRequest)
+    ? ` THE USER SET A FORMAT for this round ("${clip(roundRequest.trim(), 160)}"). Obey it exactly; it overrides your word budget and SHAPE. If they asked for one line, write one sentence of at most 25 words and nothing else: no closing question.`
+    : "";
+
   const earlier = lastUserIndex >= 0 ? recent.slice(0, lastUserIndex) : recent;
   if (earlier.length > 0) {
     parts.push(
@@ -159,14 +174,15 @@ export const buildContextPrompt = ({
       );
     }
     parts.push(
-      `YOUR TURN: answer the user's request with your own method. Name at least one member above and build on or challenge their strongest point. Add something none of them said; do not repeat their points.`
+      `YOUR TURN: in your first or second sentence, name one member above and take on their specific claim. Prefer pushing back: say exactly where they're wrong, too optimistic or missing the point. Never open with "I agree", "Great point" or "X raises a valid concern"; open with your own claim and fold the name in ("Bison's 40-hour plan skips the real bottleneck: ..."). Then add something none of them said, with your own method. Do not repeat their points.${formatReminder}`
     );
   } else {
     parts.push(`THE USER'S REQUEST:\n${clip(userPrompt, 2000)}`);
     parts.push(
-      isFollowUp
+      (isFollowUp
         ? "YOUR TURN: answer with your own method and add something new."
-        : "YOUR TURN: you speak first this round. Answer with your own method and set a high bar for the rest of the council."
+        : "YOUR TURN: you speak first this round. Answer with your own method and set a high bar for the rest of the council.") +
+        formatReminder
     );
   }
 

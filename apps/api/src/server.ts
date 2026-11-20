@@ -229,6 +229,8 @@ const ExportCreateSchema = z.object({
 
 // Guest and title requests run on the project's LLM key without an account, so they share a
 // daily ceiling on top of the per-IP rate limit. In-memory, per instance; resets at UTC midnight.
+const PERSONA_MAX_TOKENS = 420;
+
 const GUEST_DAILY_LIMIT = (() => {
   const parsed = Number.parseInt(process.env.GUEST_DAILY_LIMIT ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 500;
@@ -459,6 +461,9 @@ app.post("/api/guest/stream", { config: llmRateLimit }, async (request, reply) =
       {
         model: openaiModel,
         temperature: openaiTemperature,
+        // Backstop for the prompt's word budgets (~170 words): long enough never to clip a
+        // reply that respects them, short enough to stop a runaway one.
+        max_tokens: PERSONA_MAX_TOKENS,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: contextPrompt }
@@ -599,6 +604,9 @@ app.post("/api/sessions/:sessionId/stream", { config: llmRateLimit }, async (req
       {
         model: openaiModel,
         temperature: openaiTemperature,
+        // Backstop for the prompt's word budgets (~170 words): long enough never to clip a
+        // reply that respects them, short enough to stop a runaway one.
+        max_tokens: PERSONA_MAX_TOKENS,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: contextPrompt }
